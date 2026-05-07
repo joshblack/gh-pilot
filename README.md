@@ -2,20 +2,20 @@
 
 A **terminal session manager for AI coding agents** — a `gh` extension written in Rust.
 
-`gh mission-control` gives you a beautiful TUI to manage all your [GitHub Copilot](https://github.com/features/copilot) agent sessions at once. It works like a multiplexer for AI: see which sessions are active, navigate between them, and inspect their output — all from one terminal.
+`gh mission-control` gives you a beautiful TUI to manage all your [GitHub Copilot](https://github.com/features/copilot) agent sessions at once. It reads directly from the Copilot CLI's session store (`~/.copilot/session-state/`) so every session you've ever started automatically appears here — no setup required.
 
 ---
 
 ## Features
 
-- **Split-pane TUI** — sessions list on the left, session detail/output on the right
-- **Sessions grouped by project folder** and sorted newest-first
-- **Active / Inactive / Paused** status indicators (`●` / `○` / `⏸`)
-- **Vim-style navigation** — `j`/`k` to move, `Enter`/`Space` to select
-- **Create new sessions** — `n` to name a session and link it to a project path
-- **Delete sessions** — `d` with a confirmation prompt
-- **Toggle status** — `t` to cycle a session between Active ↔ Inactive
-- **Scrollable log output** — view the output transcript of each session
+- **Reads real Copilot CLI sessions** from `~/.copilot/session-state/` — no extra configuration
+- **Split-pane TUI** — sessions list on the left, session detail/conversation on the right
+- **Sessions grouped by working directory** and sorted newest-first
+- **Active / Inactive** status indicators (`●` / `○`) — active means a copilot process is currently running
+- **Conversation history** — view user messages and Copilot responses in the detail pane
+- **Vim-style navigation** — `j`/`k` to move, `Enter`/`Space` to view detail
+- **Launch new sessions** — `n` to start `copilot -C <dir>` with the current directory pre-filled
+- **Resume sessions** — `o` to resume any existing session with `copilot --resume=<id>`
 - **Reload** — `r` to refresh from disk at any time
 
 ---
@@ -45,6 +45,13 @@ cargo build --release
 
 ---
 
+## Requirements
+
+- [GitHub Copilot CLI](https://docs.github.com/copilot/how-tos/copilot-cli) — install with `gh copilot`
+- Sessions are stored in `~/.copilot/session-state/` (created automatically when you run `copilot`)
+
+---
+
 ## Key Bindings
 
 ### Sessions panel (left)
@@ -53,10 +60,9 @@ cargo build --release
 |-----|--------|
 | `j` / `↓` | Move selection down |
 | `k` / `↑` | Move selection up |
-| `Enter` / `Space` | Open session detail |
-| `n` | Create new session |
-| `d` | Delete selected session |
-| `t` | Toggle Active ↔ Inactive |
+| `Enter` / `Space` | View session detail |
+| `o` | Open/resume in Copilot |
+| `n` | Launch new Copilot session |
 | `r` | Reload sessions from disk |
 | `q` | Quit |
 
@@ -64,49 +70,55 @@ cargo build --release
 
 | Key | Action |
 |-----|--------|
-| `j` / `↓` | Scroll log down |
-| `k` / `↑` | Scroll log up |
+| `j` / `↓` | Scroll conversation down |
+| `k` / `↑` | Scroll conversation up |
+| `o` | Open/resume in Copilot |
 | `Esc` / `h` / `←` | Return to sessions list |
-| `t` | Toggle status |
-| `d` | Delete session |
+| `n` | Launch new Copilot session |
 | `q` | Quit |
+
+### New session prompt
+
+| Key | Action |
+|-----|--------|
+| `Enter` | Launch `copilot -C <dir>` |
+| `Esc` | Cancel |
+| Type | Edit the directory path |
 
 ---
 
 ## Session storage
 
-Sessions are stored as JSON files in:
+Sessions are stored by the Copilot CLI itself. `gh-mission-control` reads from:
 
-- **Linux/WSL:** `~/.local/share/gh-mission-control/sessions/`
-- **macOS:** `~/Library/Application Support/gh-mission-control/sessions/`
+- **Session metadata**: `~/.copilot/session-state/<id>/workspace.yaml`
+- **Conversation history**: `~/.copilot/session-store.db` (SQLite)
 
-Each session has a metadata file (`<id>.json`) and an optional output log (`<id>.log`).
+### `workspace.yaml` structure
 
-### Session JSON format
-
-```json
-{
-  "id": "uuid-v4",
-  "name": "feature/auth-refactor",
-  "project_path": "~/projects/webapp",
-  "created_at": "2024-01-15T10:30:00Z",
-  "updated_at": "2024-01-15T11:45:00Z",
-  "status": "active",
-  "description": "Refactoring the authentication layer",
-  "pid": null
-}
+```yaml
+id: <uuid>
+cwd: /path/to/project
+git_root: /path/to/project
+repository: owner/repo
+branch: feature/my-feature
+user_named: false
+created_at: 2024-01-15T10:30:00Z
+updated_at: 2024-01-15T11:45:00Z
 ```
 
-You can append lines to a session's log from your AI agent scripts:
+### Launching sessions from the CLI
+
+You can also launch sessions directly with the Copilot CLI:
 
 ```sh
-echo "[$(date)] Working on feature X" >> ~/.local/share/gh-mission-control/sessions/<id>.log
+# Start a new session in the current directory
+copilot
+
+# Start a named session
+copilot --name="my feature"
+
+# Resume a previous session
+copilot --resume=<session-id>
 ```
 
----
-
-## Override sessions directory
-
-```sh
-gh mission-control --sessions-dir /path/to/sessions
-```
