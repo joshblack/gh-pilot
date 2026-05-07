@@ -29,7 +29,7 @@ pub enum Mode {
 pub enum PendingAction {
     None,
     /// Resume an existing session embedded in the right panel.
-    OpenEmbedded { id: String },
+    OpenEmbedded { id: String, cwd: PathBuf },
     /// Start a new copilot session in `dir`, embedded in the right panel.
     LaunchNew { dir: PathBuf },
 }
@@ -242,9 +242,10 @@ impl App {
     pub fn open_session_embedded(&mut self) {
         if let Some(idx) = self.session_at_cursor() {
             let id = self.sessions[idx].id.clone();
+            let cwd = self.sessions[idx].cwd.clone();
             self.selected_session = Some(idx);
             self.active_panel = Panel::Detail;
-            self.pending_action = PendingAction::OpenEmbedded { id };
+            self.pending_action = PendingAction::OpenEmbedded { id, cwd };
         }
     }
 

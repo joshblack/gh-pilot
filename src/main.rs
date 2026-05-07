@@ -70,13 +70,20 @@ where
         let action = std::mem::replace(&mut app.pending_action, PendingAction::None);
         match action {
             PendingAction::None => {}
-            PendingAction::OpenEmbedded { id } => {
+            PendingAction::OpenEmbedded { id, cwd } => {
                 let term_size = terminal.size()?;
                 let (rows, cols) = embedded_terminal_size(term_size);
                 match copilot_binary() {
                     Some(bin) => {
                         let resume_arg = format!("--resume={id}");
-                        match EmbeddedTerminal::spawn(id.clone(), &bin, &[resume_arg.as_str()], rows, cols) {
+                        match EmbeddedTerminal::spawn(
+                            id.clone(),
+                            &bin,
+                            &[resume_arg.as_str()],
+                            Some(&cwd),
+                            rows,
+                            cols,
+                        ) {
                             Ok(term) => {
                                 app.embedded_terminal = Some(term);
                                 app.mode = Mode::Terminal;
@@ -100,7 +107,14 @@ where
                 match copilot_binary() {
                     Some(bin) => {
                         let dir_str = dir.to_string_lossy().to_string();
-                        match EmbeddedTerminal::spawn("new".into(), &bin, &["-C", dir_str.as_str()], rows, cols) {
+                        match EmbeddedTerminal::spawn(
+                            "new".into(),
+                            &bin,
+                            &["-C", dir_str.as_str()],
+                            Some(&dir),
+                            rows,
+                            cols,
+                        ) {
                             Ok(term) => {
                                 app.embedded_terminal = Some(term);
                                 app.mode = Mode::Terminal;

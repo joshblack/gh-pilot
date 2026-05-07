@@ -27,11 +27,13 @@ pub struct EmbeddedTerminal {
 }
 
 impl EmbeddedTerminal {
-    /// Spawn `copilot_bin` with `args` inside a PTY of size `rows × cols`.
+    /// Spawn `copilot_bin` with `args` inside a PTY of size `rows × cols`,
+    /// with the working directory set to `cwd`.
     pub fn spawn(
         session_id: String,
         copilot_bin: &PathBuf,
         args: &[impl AsRef<std::ffi::OsStr>],
+        cwd: Option<&std::path::Path>,
         rows: u16,
         cols: u16,
     ) -> anyhow::Result<Self> {
@@ -51,6 +53,10 @@ impl EmbeddedTerminal {
         let mut cmd = CommandBuilder::new(copilot_bin);
         for arg in args {
             cmd.arg(arg);
+        }
+        // Set the working directory to the session's cwd so copilot opens in the right project.
+        if let Some(dir) = cwd {
+            cmd.cwd(dir);
         }
         // Tell copilot it's running in a color-capable terminal.
         cmd.env("TERM", "xterm-256color");
