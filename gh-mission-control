@@ -25,7 +25,7 @@ BINARY="$SCRIPT_DIR/target/release/gh-mission-control"
 if [ ! -f "$BINARY" ]; then
     echo "Building gh-mission-control (this may take a moment on first run)…" >&2
     cd "$SCRIPT_DIR"
-    if ! cargo build --release --quiet 2>&1; then
+    if ! cargo build --release --quiet; then
         echo "" >&2
         echo "Build failed." >&2
         echo "Ensure the Rust toolchain is installed: https://rustup.rs/" >&2

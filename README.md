@@ -15,7 +15,7 @@ Codex, OpenCode, or any custom command) from a single terminal.
 |---|---|
 | [GitHub CLI](https://cli.github.com/) `gh` | See [cli.github.com](https://cli.github.com/) |
 | [tmux](https://github.com/tmux/tmux) | `brew install tmux` / `apt install tmux` |
-| [Rust toolchain](https://rustup.rs/) (build only) | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
+| [Rust toolchain](https://rustup.rs/) (build only) | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh` |
 
 ---
 
