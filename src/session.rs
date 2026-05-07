@@ -1,183 +1,185 @@
-use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
-use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
+// ── Status ──────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum SessionStatus {
     Active,
     Inactive,
-    Paused,
 }
 
 impl SessionStatus {
-    #[allow(dead_code)]
-    pub fn symbol(&self) -> &str {
-        match self {
-            SessionStatus::Active => "●",
-            SessionStatus::Inactive => "○",
-            SessionStatus::Paused => "⏸",
-        }
-    }
-
     pub fn label(&self) -> &str {
         match self {
             SessionStatus::Active => "Active",
             SessionStatus::Inactive => "Inactive",
-            SessionStatus::Paused => "Paused",
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Session {
+// ── Session model ────────────────────────────────────────────────────────────
+
+/// A Copilot CLI session read from `~/.copilot/session-state/<id>/workspace.yaml`.
+#[derive(Debug, Clone)]
+pub struct CopilotSession {
     pub id: String,
-    pub name: String,
-    /// Absolute path to the project directory this session belongs to
-    pub project_path: String,
+    /// Working directory where the session was started
+    pub cwd: PathBuf,
+    /// Git root (may differ from cwd)
+    #[allow(dead_code)]
+    pub git_root: Option<PathBuf>,
+    /// GitHub repository (e.g., "owner/repo")
+    pub repository: Option<String>,
+    /// Current git branch
+    pub branch: Option<String>,
+    /// Auto-generated or user-provided summary / name
+    pub summary: Option<String>,
+    /// Whether the user explicitly named this session
+    #[allow(dead_code)]
+    pub user_named: bool,
+    #[allow(dead_code)]
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub status: SessionStatus,
-    pub description: Option<String>,
-    /// Optional PID of the running process
-    pub pid: Option<u32>,
 }
 
-impl Session {
-    pub fn new(name: impl Into<String>, project_path: impl Into<String>) -> Self {
-        let now = Utc::now();
-        Session {
-            id: Uuid::new_v4().to_string(),
-            name: name.into(),
-            project_path: project_path.into(),
-            created_at: now,
-            updated_at: now,
-            status: SessionStatus::Active,
-            description: None,
-            pid: None,
+impl CopilotSession {
+    /// Display name for this session.
+    /// Priority: user summary → branch → last cwd component → id prefix.
+    pub fn display_name(&self) -> String {
+        if let Some(ref s) = self.summary {
+            let first = s.lines().next().unwrap_or("").trim();
+            if !first.is_empty() {
+                return first.to_string();
+            }
         }
+        if let Some(ref b) = self.branch {
+            if !b.is_empty() {
+                return b.clone();
+            }
+        }
+        self.cwd
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(&self.id[..8])
+            .to_string()
     }
 
-    /// Display name for the project folder (last two path components)
+    /// Key used for grouping (the cwd path, shortened for display).
+    pub fn group_key(&self) -> String {
+        self.cwd.to_string_lossy().to_string()
+    }
+}
+
+// ── Conversation turns ───────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct Turn {
+    pub turn_index: i64,
+    pub user_message: Option<String>,
+    pub assistant_response: Option<String>,
     #[allow(dead_code)]
-    pub fn folder_label(&self) -> String {
-        let p = Path::new(&self.project_path);
-        let mut parts: Vec<&str> = p
-            .components()
-            .filter_map(|c| c.as_os_str().to_str())
-            .collect();
-        // Show at most the last 2 segments of the path
-        let n = parts.len();
-        if n > 2 {
-            parts = parts[n - 2..].to_vec();
-            format!("…/{}/{}", parts[0], parts[1])
-        } else {
-            parts.join("/")
-        }
-    }
-
-    /// Check if the process is still alive (if pid is set)
-    pub fn is_process_alive(&self) -> bool {
-        if let Some(pid) = self.pid {
-            // Send signal 0 to check process existence
-            let result = libc_kill(pid as i32, 0);
-            result == 0
-        } else {
-            false
-        }
-    }
-
-    pub fn log_path(&self, sessions_dir: &Path) -> PathBuf {
-        sessions_dir.join(&self.id).with_extension("log")
-    }
-
-    pub fn meta_path(&self, sessions_dir: &Path) -> PathBuf {
-        sessions_dir.join(&self.id).with_extension("json")
-    }
-
-    pub fn save(&self, sessions_dir: &Path) -> Result<()> {
-        fs::create_dir_all(sessions_dir)
-            .context("Failed to create sessions directory")?;
-        let path = self.meta_path(sessions_dir);
-        let json = serde_json::to_string_pretty(self).context("Failed to serialize session")?;
-        fs::write(&path, json).context("Failed to write session file")?;
-        Ok(())
-    }
-
-    pub fn append_log(&self, sessions_dir: &Path, line: &str) -> Result<()> {
-        use std::io::Write;
-        let path = self.log_path(sessions_dir);
-        let mut file = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .context("Failed to open log file")?;
-        writeln!(file, "{}", line).context("Failed to write log line")?;
-        Ok(())
-    }
-
-    pub fn read_log(&self, sessions_dir: &Path) -> String {
-        let path = self.log_path(sessions_dir);
-        fs::read_to_string(&path).unwrap_or_default()
-    }
-
-    pub fn delete(&self, sessions_dir: &Path) -> Result<()> {
-        let meta = self.meta_path(sessions_dir);
-        let log = self.log_path(sessions_dir);
-        if meta.exists() {
-            fs::remove_file(&meta).context("Failed to remove session file")?;
-        }
-        if log.exists() {
-            let _ = fs::remove_file(&log);
-        }
-        Ok(())
-    }
+    pub timestamp: String,
 }
 
-/// Load all sessions from the sessions directory, sorted newest-first.
-pub fn load_sessions(sessions_dir: &Path) -> Vec<Session> {
+// ── Loading ──────────────────────────────────────────────────────────────────
+
+/// Default path to the copilot configuration directory.
+pub fn copilot_dir() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".copilot")
+}
+
+/// Path to the session-state directory inside the copilot config dir.
+pub fn session_state_dir(copilot_dir: &Path) -> PathBuf {
+    copilot_dir.join("session-state")
+}
+
+/// Path to the SQLite session store.
+pub fn session_db_path(copilot_dir: &Path) -> PathBuf {
+    copilot_dir.join("session-store.db")
+}
+
+/// Load all copilot sessions from `~/.copilot/session-state/`, sorted newest-first.
+pub fn load_sessions(copilot_dir: &Path) -> Vec<CopilotSession> {
+    let state_dir = session_state_dir(copilot_dir);
+    let db_path = session_db_path(copilot_dir);
+
     let mut sessions = Vec::new();
 
-    let entries = match fs::read_dir(sessions_dir) {
+    let entries = match fs::read_dir(&state_dir) {
         Ok(e) => e,
         Err(_) => return sessions,
     };
 
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) == Some("json") {
-            if let Ok(content) = fs::read_to_string(&path) {
-                if let Ok(mut session) = serde_json::from_str::<Session>(&content) {
-                    // Auto-update status based on process liveness
-                    if session.status == SessionStatus::Active && !session.is_process_alive() {
-                        // Only auto-inactivate if we had a pid set
-                        if session.pid.is_some() {
-                            session.status = SessionStatus::Inactive;
-                        }
-                    }
-                    sessions.push(session);
-                }
+        if !path.is_dir() {
+            continue;
+        }
+        let workspace = path.join("workspace.yaml");
+        if !workspace.exists() {
+            continue;
+        }
+        if let Ok(content) = fs::read_to_string(&workspace) {
+            if let Some(mut session) = parse_workspace_yaml(&content) {
+                // Try to enrich with summary from SQLite
+                session.summary = load_summary_from_db(&db_path, &session.id)
+                    .or(session.summary);
+                // Detect if active
+                session.status = if is_session_active(&session.id) {
+                    SessionStatus::Active
+                } else {
+                    SessionStatus::Inactive
+                };
+                sessions.push(session);
             }
         }
     }
 
-    // Sort newest first
-    sessions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    // Sort newest-first by updated_at
+    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     sessions
 }
 
-/// Group sessions by project path, preserving per-group sort order (newest first).
-pub fn group_sessions(sessions: &[Session]) -> Vec<(String, Vec<usize>)> {
-    // We build an ordered list of groups (preserving first-seen order of project paths)
-    // Each group entry: (project_path, [indices into sessions])
+/// Load conversation turns for a session from the SQLite database.
+pub fn load_turns(db_path: &Path, session_id: &str) -> Vec<Turn> {
+    let conn = match rusqlite::Connection::open(db_path) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    let mut stmt = match conn.prepare(
+        "SELECT turn_index, user_message, assistant_response, timestamp \
+         FROM turns WHERE session_id = ? ORDER BY turn_index ASC",
+    ) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+
+    stmt.query_map([session_id], |row| {
+        Ok(Turn {
+            turn_index: row.get(0)?,
+            user_message: row.get(1)?,
+            assistant_response: row.get(2)?,
+            timestamp: row.get::<_, String>(3).unwrap_or_default(),
+        })
+    })
+    .map(|rows| rows.flatten().collect())
+    .unwrap_or_default()
+}
+
+/// Group sessions by their `cwd`, preserving newest-first order within each group.
+/// Returns `(group_key, [indices into sessions])` pairs.
+pub fn group_sessions(sessions: &[CopilotSession]) -> Vec<(String, Vec<usize>)> {
     let mut groups: Vec<(String, Vec<usize>)> = Vec::new();
-    let mut group_index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut group_index: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
 
     for (i, session) in sessions.iter().enumerate() {
-        let key = session.project_path.clone();
+        let key = session.group_key();
         if let Some(&gi) = group_index.get(&key) {
             groups[gi].1.push(i);
         } else {
@@ -186,92 +188,128 @@ pub fn group_sessions(sessions: &[Session]) -> Vec<(String, Vec<usize>)> {
             groups.push((key, vec![i]));
         }
     }
-
     groups
 }
 
-/// Seed some demo sessions so the tool is immediately useful.
-pub fn seed_demo_sessions(sessions_dir: &Path) -> Result<()> {
-    use std::time::Duration;
+// ── Copilot binary ────────────────────────────────────────────────────────────
 
-    let demos = vec![
-        (
-            "feature/auth-refactor",
-            "~/projects/webapp",
-            SessionStatus::Active,
-            Some("Refactoring authentication layer with JWT tokens"),
-        ),
-        (
-            "fix/memory-leak",
-            "~/projects/webapp",
-            SessionStatus::Inactive,
-            Some("Investigating memory leak in websocket handler"),
-        ),
-        (
-            "chore/ci-improvements",
-            "~/projects/cli-tool",
-            SessionStatus::Paused,
-            Some("Updating CI pipeline to use caching"),
-        ),
-        (
-            "feature/new-commands",
-            "~/projects/cli-tool",
-            SessionStatus::Active,
-            Some("Adding new subcommands for batch processing"),
-        ),
-        (
-            "docs/api-reference",
-            "~/projects/api-service",
-            SessionStatus::Inactive,
-            Some("Writing OpenAPI 3.0 documentation"),
-        ),
-    ];
+/// Find the copilot binary: prefers `~/.local/share/gh/copilot/copilot`, then PATH.
+pub fn copilot_binary() -> Option<PathBuf> {
+    // Check the standard gh-managed location first
+    if let Some(home) = dirs::home_dir() {
+        let candidate = home
+            .join(".local")
+            .join("share")
+            .join("gh")
+            .join("copilot")
+            .join("copilot");
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+    // Fall back to PATH
+    which_in_path("copilot")
+}
 
-    // Only seed if there are no existing sessions
-    if sessions_dir.exists() {
-        let count = fs::read_dir(sessions_dir)
-            .map(|entries| entries.filter(|e| e.is_ok()).count())
-            .unwrap_or(0);
-        if count > 0 {
-            return Ok(());
+fn which_in_path(name: &str) -> Option<PathBuf> {
+    let path_var = std::env::var("PATH").unwrap_or_default();
+    for dir in path_var.split(':') {
+        let candidate = PathBuf::from(dir).join(name);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+/// Parse a flat `key: value` workspace.yaml file.
+fn parse_workspace_yaml(content: &str) -> Option<CopilotSession> {
+    use std::collections::HashMap;
+    let mut map: HashMap<&str, &str> = HashMap::new();
+
+    for line in content.lines() {
+        if let Some((k, v)) = line.split_once(':') {
+            map.insert(k.trim(), v.trim());
         }
     }
 
-    let base_time = Utc::now();
-    for (i, (name, path, status, desc)) in demos.iter().enumerate() {
-        let offset = Duration::from_secs(i as u64 * 3600); // 1 hour apart
-        let created_at = base_time - chrono::Duration::from_std(offset).unwrap_or_default();
-        let mut session = Session::new(*name, *path);
-        session.created_at = created_at;
-        session.updated_at = created_at;
-        session.status = status.clone();
-        session.description = desc.map(|s| s.to_string());
-        session.save(sessions_dir)?;
+    let id = map.get("id")?.to_string();
+    let cwd = map
+        .get("cwd")
+        .map(|s| PathBuf::from(s))
+        .unwrap_or_else(|| PathBuf::from("/"));
+    let git_root = map.get("git_root").map(|s| PathBuf::from(s));
+    let repository = map.get("repository").map(|s| s.to_string());
+    let branch = map.get("branch").map(|s| s.to_string());
+    let user_named = map.get("user_named").map(|s| *s == "true").unwrap_or(false);
+    let created_at = map
+        .get("created_at")
+        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+        .map(|d| d.with_timezone(&Utc))
+        .unwrap_or_else(Utc::now);
+    let updated_at = map
+        .get("updated_at")
+        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+        .map(|d| d.with_timezone(&Utc))
+        .unwrap_or(created_at);
 
-        // Write some demo log lines
-        let log_lines = vec![
-            format!("[{}] Session started", created_at.format("%Y-%m-%d %H:%M:%S")),
-            format!("[{}] Working on: {}", created_at.format("%Y-%m-%d %H:%M:%S"), name),
-            format!("[{}] {}", created_at.format("%Y-%m-%d %H:%M:%S"), desc.unwrap_or("")),
-        ];
-        for line in &log_lines {
-            session.append_log(sessions_dir, line)?;
+    // summary_count can guide us but the actual summary comes from the DB
+    let summary = None;
+
+    Some(CopilotSession {
+        id,
+        cwd,
+        git_root,
+        repository,
+        branch,
+        summary,
+        user_named,
+        created_at,
+        updated_at,
+        status: SessionStatus::Inactive, // will be updated by caller
+    })
+}
+
+/// Try to load the auto-generated summary for a session from the SQLite DB.
+fn load_summary_from_db(db_path: &Path, session_id: &str) -> Option<String> {
+    let conn = rusqlite::Connection::open(db_path).ok()?;
+    conn.query_row(
+        "SELECT summary FROM sessions WHERE id = ?",
+        [session_id],
+        |row| row.get::<_, Option<String>>(0),
+    )
+    .ok()
+    .flatten()
+    .filter(|s| !s.is_empty())
+}
+
+/// Check if a copilot session is currently active by scanning running processes.
+/// On Linux this reads /proc/*/cmdline; returns false on other platforms.
+fn is_session_active(session_id: &str) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let proc = match fs::read_dir("/proc") {
+            Ok(e) => e,
+            Err(_) => return false,
+        };
+        for entry in proc.flatten() {
+            let cmdline_path = entry.path().join("cmdline");
+            if let Ok(bytes) = fs::read(&cmdline_path) {
+                // cmdline args are NUL-separated
+                let cmdline = String::from_utf8_lossy(&bytes);
+                if cmdline.contains(session_id) {
+                    return true;
+                }
+            }
         }
+        false
     }
-
-    Ok(())
-}
-
-/// libc kill(2) for checking if a process is alive
-#[cfg(unix)]
-fn libc_kill(pid: i32, sig: i32) -> i32 {
-    unsafe extern "C" {
-        fn kill(pid: i32, sig: i32) -> i32;
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = session_id;
+        false
     }
-    unsafe { kill(pid, sig) }
 }
 
-#[cfg(not(unix))]
-fn libc_kill(_pid: i32, _sig: i32) -> i32 {
-    -1
-}
