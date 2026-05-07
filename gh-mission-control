@@ -1,0 +1,36 @@
+#!/bin/sh
+# gh-mission-control – GitHub CLI extension entry point.
+#
+# When installed as a gh extension ("gh extension install ."),
+# GitHub CLI will call this script to run the extension.
+#
+# The first time this script is executed it builds the Rust binary;
+# subsequent invocations skip the build step.
+set -e
+
+# Resolve the directory that contains this script, handling symlinks.
+SCRIPT="$0"
+while [ -L "$SCRIPT" ]; do
+    SCRIPT_DIR="$(cd "$(dirname "$SCRIPT")" && pwd)"
+    SCRIPT="$(readlink "$SCRIPT")"
+    case "$SCRIPT" in
+        /*) ;;
+        *) SCRIPT="$SCRIPT_DIR/$SCRIPT" ;;
+    esac
+done
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT")" && pwd)"
+
+BINARY="$SCRIPT_DIR/target/release/gh-mission-control"
+
+if [ ! -f "$BINARY" ]; then
+    echo "Building gh-mission-control (this may take a moment on first run)…" >&2
+    cd "$SCRIPT_DIR"
+    if ! cargo build --release --quiet 2>&1; then
+        echo "" >&2
+        echo "Build failed." >&2
+        echo "Ensure the Rust toolchain is installed: https://rustup.rs/" >&2
+        exit 1
+    fi
+fi
+
+exec "$BINARY" "$@"

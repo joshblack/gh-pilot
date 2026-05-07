@@ -1,0 +1,23 @@
+[package]
+name = "gh-mission-control"
+version = "0.1.0"
+edition = "2021"
+description = "A GitHub CLI extension for terminal-based AI agent mission control"
+license = "MIT"
+
+[[bin]]
+name = "gh-mission-control"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.6", features = ["derive", "color"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "6.0"
+anyhow = "1.0"
+thiserror = "2.0"
+
+[dev-dependencies]
+tempfile = "3"
