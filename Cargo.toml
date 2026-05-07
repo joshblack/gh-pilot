@@ -1,0 +1,20 @@
+[package]
+name = "gh-mission-control"
+version = "0.1.0"
+edition = "2021"
+description = "Terminal session manager for AI coding agents (gh extension)"
+license = "MIT"
+
+[[bin]]
+name = "gh-mission-control"
+path = "src/main.rs"
+
+[dependencies]
+ratatui = "0.30"
+crossterm = "0.29"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "5"
+uuid = { version = "1", features = ["v4"] }
+anyhow = "1"
