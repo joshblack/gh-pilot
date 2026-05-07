@@ -31,7 +31,7 @@ impl EmbeddedTerminal {
     pub fn spawn(
         session_id: String,
         copilot_bin: &PathBuf,
-        args: &[String],
+        args: &[impl AsRef<std::ffi::OsStr>],
         rows: u16,
         cols: u16,
     ) -> anyhow::Result<Self> {
