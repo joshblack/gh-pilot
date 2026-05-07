@@ -59,7 +59,7 @@ fn run_event_loop<B: ratatui::backend::Backend>(
 where
     B::Error: Send + Sync + 'static,
 {
-    let tick_rate = Duration::from_millis(50); // fast tick so terminal output is responsive
+    let tick_rate = Duration::from_millis(100); // balanced: responsive terminal output + low CPU
     let mut last_tick = Instant::now();
     let mut status_since: Option<Instant> = None;
 
@@ -75,8 +75,8 @@ where
                 let (rows, cols) = embedded_terminal_size(term_size);
                 match copilot_binary() {
                     Some(bin) => {
-                        let args = vec![format!("--resume={id}")];
-                        match EmbeddedTerminal::spawn(id.clone(), &bin, &args, rows, cols) {
+                        let resume_arg = format!("--resume={id}");
+                        match EmbeddedTerminal::spawn(id.clone(), &bin, &[resume_arg.as_str()], rows, cols) {
                             Ok(term) => {
                                 app.embedded_terminal = Some(term);
                                 app.mode = Mode::Terminal;
@@ -100,8 +100,7 @@ where
                 match copilot_binary() {
                     Some(bin) => {
                         let dir_str = dir.to_string_lossy().to_string();
-                        let args = vec!["-C".to_string(), dir_str];
-                        match EmbeddedTerminal::spawn("new".into(), &bin, &args, rows, cols) {
+                        match EmbeddedTerminal::spawn("new".into(), &bin, &["-C", dir_str.as_str()], rows, cols) {
                             Ok(term) => {
                                 app.embedded_terminal = Some(term);
                                 app.mode = Mode::Terminal;

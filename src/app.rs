@@ -311,7 +311,7 @@ fn build_flat_list(sessions: &[CopilotSession], expanded: &HashSet<String>) -> V
         if !is_expanded && total > MAX_SESSIONS_PER_GROUP {
             flat.push(FlatItem::LoadMore {
                 group_key: key,
-                hidden_count: total - MAX_SESSIONS_PER_GROUP,
+                hidden_count: total - visible, // = total - MAX_SESSIONS_PER_GROUP when collapsed
             });
         }
     }

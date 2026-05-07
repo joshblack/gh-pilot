@@ -498,7 +498,12 @@ fn render_vt100_screen(
             let (ch, style) = match screen.cell(row as u16, col as u16) {
                 Some(cell) => {
                     let c = cell.contents();
-                let ch = if c.is_empty() { " ".to_string() } else { c.to_string() };
+                    // Avoid an allocation for the common blank-cell case.
+                    let ch = if c.is_empty() {
+                        " ".to_string()
+                    } else {
+                        c.to_string()
+                    };
                     (ch, cell_to_ratatui_style(cell))
                 }
                 None => (" ".to_string(), Style::default()),
@@ -510,7 +515,7 @@ fn render_vt100_screen(
                 if !cur_text.is_empty() {
                     spans.push(Span::styled(std::mem::take(&mut cur_text), cur_style));
                 }
-                cur_text = ch.to_string();
+                cur_text = ch; // ch is already a String
                 cur_style = style;
             }
         }
