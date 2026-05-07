@@ -277,12 +277,12 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
     ];
 
     if let Some(desc) = &session.description {
-        let mut lines = info_lines;
-        lines.push(Line::from(vec![
+        let mut info_lines_with_desc = info_lines;
+        info_lines_with_desc.push(Line::from(vec![
             Span::styled("  Notes:    ", Style::default().fg(Color::Gray)),
             Span::styled(desc.as_str(), Style::default().fg(Color::White)),
         ]));
-        let info_card = Paragraph::new(lines)
+        let info_card = Paragraph::new(info_lines_with_desc)
             .block(
                 Block::default()
                     .borders(Borders::BOTTOM)
