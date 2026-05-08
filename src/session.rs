@@ -292,12 +292,7 @@ fn detect_session_status(db_path: &Path, session_id: &str) -> SessionStatus {
     match load_latest_turn_from_db(db_path, session_id) {
         Some((_, Some(response))) if response_indicates_error(&response) => SessionStatus::Error,
         Some((Some(user_message), assistant_response))
-            if !user_message.trim().is_empty()
-                && assistant_response
-                    .as_deref()
-                    .map(str::trim)
-                    .unwrap_or_default()
-                    .is_empty() =>
+            if is_awaiting_response(&user_message, &assistant_response) =>
         {
             SessionStatus::Running
         }
@@ -319,14 +314,22 @@ fn load_latest_turn_from_db(
     .ok()
 }
 
+fn is_awaiting_response(user_message: &str, assistant_response: &Option<String>) -> bool {
+    !user_message.trim().is_empty()
+        && assistant_response
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default()
+            .is_empty()
+}
+
 fn response_indicates_error(response: &str) -> bool {
     let response = response.to_ascii_lowercase();
     [
         "something went wrong",
         "encountered an error",
-        "failed to",
-        "fatal error",
-        "panic",
+        "fatal error:",
+        "panic:",
     ]
     .iter()
     .any(|needle| response.contains(needle))
