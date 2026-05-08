@@ -6,7 +6,9 @@ mod ui;
 use anyhow::{Context, Result};
 use app::{App, Mode, Panel, PendingAction};
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseEventKind,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -159,11 +161,15 @@ where
             .unwrap_or(Duration::ZERO);
 
         if event::poll(timeout).context("Event poll failed")? {
-            if let Event::Key(key) = event::read().context("Event read failed")? {
-                handle_key(app, key.code, key.modifiers);
-                if app.status_message.is_some() {
-                    status_since = Some(Instant::now());
+            match event::read().context("Event read failed")? {
+                Event::Key(key) => {
+                    handle_key(app, key.code, key.modifiers);
+                    if app.status_message.is_some() {
+                        status_since = Some(Instant::now());
+                    }
                 }
+                Event::Mouse(mouse) => handle_mouse(app, mouse.kind),
+                _ => {}
             }
         }
 
@@ -192,9 +198,9 @@ fn embedded_terminal_size(term_size: ratatui::layout::Size, fullscreen: bool) ->
     let (height, width) = if fullscreen {
         (term_size.height, term_size.width)
     } else {
-        // Body + footer(3), with the terminal in the right 65% detail panel.
+        // Body + footer(1), with the terminal in the right 65% detail panel.
         (
-            term_size.height.saturating_sub(3),
+            term_size.height.saturating_sub(1),
             term_size.width * 65 / 100,
         )
     };
@@ -233,22 +239,41 @@ fn handle_normal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
             KeyCode::Char('q') | KeyCode::Char('Q') => app.should_quit = true,
             KeyCode::Char('j') | KeyCode::Down => app.move_down(),
             KeyCode::Char('k') | KeyCode::Up => app.move_up(),
+            KeyCode::PageDown => app.scroll_detail_page_down(),
+            KeyCode::PageUp => app.scroll_detail_page_up(),
             KeyCode::Enter | KeyCode::Char(' ') => app.select_current(),
+            KeyCode::Char('c') => app.toggle_current_group_collapsed(),
+            KeyCode::Char('f') => app.toggle_directory_focus(),
             KeyCode::Char('o') => app.open_session_embedded(),
             KeyCode::Char('n') => app.begin_new_session(),
             KeyCode::Char('r') => app.reload(),
+            KeyCode::Esc => app.clear_directory_focus(),
             _ => {}
         },
         Panel::Detail => match key {
             KeyCode::Char('q') | KeyCode::Char('Q') => app.should_quit = true,
             KeyCode::Char('j') | KeyCode::Down => app.scroll_detail_down(),
             KeyCode::Char('k') | KeyCode::Up => app.scroll_detail_up(),
+            KeyCode::PageDown => app.scroll_detail_page_down(),
+            KeyCode::PageUp => app.scroll_detail_page_up(),
             KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => app.focus_sessions(),
+            KeyCode::Char('f') => app.toggle_directory_focus(),
             KeyCode::Char('o') => app.open_session_embedded(),
             KeyCode::Char('n') => app.begin_new_session(),
             KeyCode::Char('r') => app.reload(),
             _ => {}
         },
+    }
+}
+
+fn handle_mouse(app: &mut App, kind: MouseEventKind) {
+    if app.mode != Mode::Normal {
+        return;
+    }
+    match kind {
+        MouseEventKind::ScrollUp => app.scroll_detail_up(),
+        MouseEventKind::ScrollDown => app.scroll_detail_down(),
+        _ => {}
     }
 }
 

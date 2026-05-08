@@ -37,7 +37,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     let outer = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(0), Constraint::Length(3)])
+        .constraints([Constraint::Min(0), Constraint::Length(1)])
         .split(area);
 
     draw_body(f, app, outer[0]);
@@ -77,8 +77,13 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
         Style::default().fg(Color::DarkGray)
     };
 
+    let title = if let Some(group) = app.focused_group.as_deref() {
+        format!(" Sessions — {} ", short_path(group))
+    } else {
+        " Sessions ".to_string()
+    };
     let block = Block::default()
-        .title(" Sessions ")
+        .title(title)
         .title_style(
             Style::default()
                 .fg(ACCENT_COLOR)
@@ -117,15 +122,35 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
         match item {
             FlatItem::GroupHeader(path) => {
                 let label = short_path(path);
+                let is_cursor = app.cursor == flat_idx;
+                let is_collapsed = app.collapsed_groups.contains(path);
+                let is_focused_group = app.focused_group.as_deref() == Some(path.as_str());
+                let prefix = if is_cursor && is_focused {
+                    "❯ "
+                } else {
+                    "  "
+                };
+                let marker = if is_collapsed { "▸ " } else { "▾ " };
+                let focus_suffix = if is_focused_group { "  focused" } else { "" };
+                let style = if is_cursor && is_focused {
+                    Style::default()
+                        .fg(HEADER_COLOR)
+                        .bg(SELECTED_BG)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                        .fg(HEADER_COLOR)
+                        .add_modifier(Modifier::BOLD)
+                };
                 items.push(ListItem::new(Line::from(vec![
-                    Span::styled("▸ ", Style::default().fg(HEADER_COLOR)),
-                    Span::styled(
-                        label,
-                        Style::default()
-                            .fg(HEADER_COLOR)
-                            .add_modifier(Modifier::BOLD),
-                    ),
+                    Span::raw(prefix),
+                    Span::styled(marker, style),
+                    Span::styled(label, style),
+                    Span::styled(focus_suffix, Style::default().fg(Color::DarkGray)),
                 ])));
+                if is_cursor {
+                    list_state.select(Some(list_idx));
+                }
                 list_idx += 1;
             }
             FlatItem::SessionEntry(idx) => {
@@ -391,7 +416,7 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
     }
 
     let total_lines = turn_lines.len();
-    let visible_height = layout[1].height.saturating_sub(2) as usize;
+    let visible_height = layout[1].height as usize;
     let max_scroll = total_lines.saturating_sub(visible_height);
     if app.detail_scroll > max_scroll {
         app.detail_scroll = max_scroll;
@@ -570,34 +595,29 @@ fn vt100_color_to_ratatui(color: vt100::Color) -> Color {
 fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     let (text, style) = match app.mode {
         Mode::NewSessionDir => (
-            " [Enter] Launch  [Esc] Cancel ",
+            "Launch: Enter  Cancel: Esc",
             Style::default().fg(Color::Yellow),
         ),
         Mode::Terminal => (
-            " [Ctrl+F] Fullscreen  [Ctrl+W] Detach  (all other keys forwarded to Copilot) ",
+            "Fullscreen: Ctrl+F  Detach: Ctrl+W  Input: forwarded to Copilot",
             Style::default().fg(ACTIVE_COLOR),
         ),
         Mode::Normal => {
             let t = match app.active_panel {
                 Panel::Sessions => {
-                    " [j/k] Navigate  [Enter] View/Expand  [o] Open live  [n] New  [r] Reload  [q] Quit "
+                    "Navigate: j/k  Preview scroll: PageUp/PageDown  View/Expand: Enter  Focus dir: f  Collapse dir: c  Open: o  New: n  Reload: r  Quit: q"
                 }
                 Panel::Detail => {
-                    " [j/k] Scroll  [o] Open live  [Esc/h] Back  [n] New  [q] Quit "
+                    "Scroll: j/k  Back: Esc/h  Focus dir: f  Open: o  New: n  Reload: r  Quit: q"
                 }
             };
             (t, Style::default().fg(Color::Gray))
         }
     };
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::DarkGray));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
     f.render_widget(
         Paragraph::new(Span::styled(text, style)).alignment(Alignment::Center),
-        inner,
+        area,
     );
 }
 

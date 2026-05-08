@@ -78,6 +78,10 @@ pub struct App {
     pub pending_action: PendingAction,
     /// Groups whose "Load more" item has been expanded.
     pub expanded_groups: HashSet<String>,
+    /// Groups that are collapsed down to only their directory header.
+    pub collapsed_groups: HashSet<String>,
+    /// When set, only sessions in this directory group are shown.
+    pub focused_group: Option<String>,
     /// A live copilot session embedded in the right panel, if any.
     pub embedded_terminal: Option<EmbeddedTerminal>,
     /// Whether the embedded terminal is taking the full TUI area.
@@ -88,7 +92,14 @@ impl App {
     pub fn new(copilot_dir: PathBuf, launch_dir: PathBuf) -> Self {
         let sessions = load_sessions(&copilot_dir);
         let expanded_groups = HashSet::new();
-        let flat_list = build_flat_list(&sessions, &expanded_groups);
+        let collapsed_groups = HashSet::new();
+        let focused_group = None;
+        let flat_list = build_flat_list(
+            &sessions,
+            &expanded_groups,
+            &collapsed_groups,
+            focused_group.as_deref(),
+        );
 
         let selected_session = flat_list.iter().find_map(|item| {
             if let FlatItem::SessionEntry(idx) = item {
@@ -118,6 +129,8 @@ impl App {
             status_message: None,
             pending_action: PendingAction::None,
             expanded_groups,
+            collapsed_groups,
+            focused_group,
             embedded_terminal: None,
             terminal_fullscreen: false,
         }
@@ -125,12 +138,18 @@ impl App {
 
     pub fn reload(&mut self) {
         self.sessions = load_sessions(&self.copilot_dir);
-        self.flat_list = build_flat_list(&self.sessions, &self.expanded_groups);
+        self.clear_missing_focused_group();
+        self.flat_list = build_flat_list(
+            &self.sessions,
+            &self.expanded_groups,
+            &self.collapsed_groups,
+            self.focused_group.as_deref(),
+        );
 
         if self.cursor >= self.flat_list.len() {
             self.cursor = self.flat_list.len().saturating_sub(1);
         }
-        self.selected_session = self.session_at_cursor();
+        self.update_selected_from_cursor();
         self.detail_scroll = 0;
     }
 
@@ -140,34 +159,16 @@ impl App {
         if self.cursor == 0 {
             return;
         }
-        let mut c = self.cursor - 1;
-        // Skip GroupHeader items only (LoadMore items are navigable).
-        while c > 0 && matches!(self.flat_list[c], FlatItem::GroupHeader(_)) {
-            c -= 1;
-        }
-        if matches!(self.flat_list[c], FlatItem::GroupHeader(_)) {
-            return;
-        }
-        self.cursor = c;
-        self.selected_session = self.session_at_cursor();
-        self.detail_scroll = 0;
+        self.cursor -= 1;
+        self.update_selected_from_cursor();
     }
 
     pub fn move_down(&mut self) {
         if self.cursor + 1 >= self.flat_list.len() {
             return;
         }
-        let mut c = self.cursor + 1;
-        while c < self.flat_list.len() - 1 && matches!(self.flat_list[c], FlatItem::GroupHeader(_))
-        {
-            c += 1;
-        }
-        if matches!(self.flat_list[c], FlatItem::GroupHeader(_)) {
-            return;
-        }
-        self.cursor = c;
-        self.selected_session = self.session_at_cursor();
-        self.detail_scroll = 0;
+        self.cursor += 1;
+        self.update_selected_from_cursor();
     }
 
     /// Select / activate the item currently under the cursor.
@@ -182,7 +183,12 @@ impl App {
                 self.expand_group(&group_key);
             }
             Some(FlatItem::GroupHeader(key)) => {
-                self.toggle_group(&key);
+                if self.collapsed_groups.contains(&key) {
+                    self.collapsed_groups.remove(&key);
+                    self.rebuild_flat_list_keep_cursor();
+                } else {
+                    self.toggle_group(&key);
+                }
             }
             None => {}
         }
@@ -198,6 +204,14 @@ impl App {
 
     pub fn scroll_detail_down(&mut self) {
         self.detail_scroll += 1;
+    }
+
+    pub fn scroll_detail_page_up(&mut self) {
+        self.detail_scroll = self.detail_scroll.saturating_sub(5);
+    }
+
+    pub fn scroll_detail_page_down(&mut self) {
+        self.detail_scroll += 5;
     }
 
     // ── Group expand / collapse ───────────────────────────────────────────────
@@ -218,12 +232,42 @@ impl App {
         self.rebuild_flat_list_keep_cursor();
     }
 
+    pub fn toggle_current_group_collapsed(&mut self) {
+        if let Some(key) = self.current_group_key() {
+            if self.collapsed_groups.contains(&key) {
+                self.collapsed_groups.remove(&key);
+            } else {
+                self.collapsed_groups.insert(key);
+            }
+            self.rebuild_flat_list_keep_cursor();
+        }
+    }
+
+    pub fn toggle_directory_focus(&mut self) {
+        if let Some(key) = self.current_group_key() {
+            if self.focused_group.as_deref() == Some(key.as_str()) {
+                self.focused_group = None;
+            } else {
+                self.focused_group = Some(key.clone());
+                self.collapsed_groups.remove(&key);
+            }
+            self.rebuild_flat_list_keep_cursor();
+        }
+    }
+
+    pub fn clear_directory_focus(&mut self) {
+        if self.focused_group.is_some() {
+            self.focused_group = None;
+            self.rebuild_flat_list_keep_cursor();
+        }
+    }
+
     // ── Session actions ───────────────────────────────────────────────────────
 
     /// Open the prompt to launch a new copilot session.
     pub fn begin_new_session(&mut self) {
         self.mode = Mode::NewSessionDir;
-        self.input_buffer = self.launch_dir.to_string_lossy().to_string();
+        self.input_buffer = self.default_new_session_dir().to_string_lossy().to_string();
     }
 
     /// Confirm the new session directory prompt and queue a launch.
@@ -281,34 +325,97 @@ impl App {
         }
     }
 
+    pub fn current_group_key(&self) -> Option<String> {
+        match self.flat_list.get(self.cursor) {
+            Some(FlatItem::GroupHeader(key)) => Some(key.clone()),
+            Some(FlatItem::LoadMore { group_key, .. }) => Some(group_key.clone()),
+            Some(FlatItem::SessionEntry(idx)) => Some(self.sessions[*idx].group_key()),
+            None => self
+                .selected_session
+                .map(|idx| self.sessions[idx].group_key())
+                .or_else(|| self.focused_group.clone()),
+        }
+    }
+
+    fn default_new_session_dir(&self) -> PathBuf {
+        self.focused_group
+            .as_ref()
+            .map(PathBuf::from)
+            .or_else(|| self.current_group_key().map(PathBuf::from))
+            .unwrap_or_else(|| self.launch_dir.clone())
+    }
+
     fn rebuild_flat_list_keep_cursor(&mut self) {
         // Try to remember which session the cursor is on.
         let cursor_id = self
             .session_at_cursor()
             .map(|i| self.sessions[i].id.clone());
-        self.flat_list = build_flat_list(&self.sessions, &self.expanded_groups);
+        let cursor_group = self.current_group_key();
+        self.clear_missing_focused_group();
+        self.flat_list = build_flat_list(
+            &self.sessions,
+            &self.expanded_groups,
+            &self.collapsed_groups,
+            self.focused_group.as_deref(),
+        );
         // Restore cursor to the same session if possible.
         if let Some(id) = cursor_id {
             if let Some(pos) = self.flat_list.iter().position(
                 |item| matches!(item, FlatItem::SessionEntry(i) if self.sessions[*i].id == id),
             ) {
                 self.cursor = pos;
+            } else if let Some(group) = cursor_group.as_deref() {
+                self.cursor = self
+                    .flat_list
+                    .iter()
+                    .position(|item| matches!(item, FlatItem::GroupHeader(key) if key == group))
+                    .unwrap_or(self.cursor);
             }
+        } else if let Some(group) = cursor_group.as_deref() {
+            self.cursor = self
+                .flat_list
+                .iter()
+                .position(|item| matches!(item, FlatItem::GroupHeader(key) if key == group))
+                .unwrap_or(self.cursor);
         }
         if self.cursor >= self.flat_list.len() {
             self.cursor = self.flat_list.len().saturating_sub(1);
         }
-        self.selected_session = self.session_at_cursor();
+        self.update_selected_from_cursor();
+    }
+
+    fn update_selected_from_cursor(&mut self) {
+        if let Some(idx) = self.session_at_cursor() {
+            self.selected_session = Some(idx);
+            self.detail_scroll = 0;
+        }
+    }
+
+    fn clear_missing_focused_group(&mut self) {
+        if let Some(ref focused) = self.focused_group {
+            if !self.sessions.iter().any(|s| s.group_key() == *focused) {
+                self.focused_group = None;
+            }
+        }
     }
 }
 
 // ── Build flat list ───────────────────────────────────────────────────────────
 
-fn build_flat_list(sessions: &[CopilotSession], expanded: &HashSet<String>) -> Vec<FlatItem> {
+fn build_flat_list(
+    sessions: &[CopilotSession],
+    expanded: &HashSet<String>,
+    collapsed: &HashSet<String>,
+    focused: Option<&str>,
+) -> Vec<FlatItem> {
     let groups = group_sessions(sessions);
     let mut flat = Vec::new();
 
     for (key, indices) in groups {
+        if focused.is_some_and(|focused| focused != key) {
+            continue;
+        }
+
         let is_expanded = expanded.contains(&key);
         let total = indices.len();
         let visible = if is_expanded {
@@ -318,6 +425,9 @@ fn build_flat_list(sessions: &[CopilotSession], expanded: &HashSet<String>) -> V
         };
 
         flat.push(FlatItem::GroupHeader(key.clone()));
+        if collapsed.contains(&key) {
+            continue;
+        }
         for &idx in &indices[..visible] {
             flat.push(FlatItem::SessionEntry(idx));
         }
