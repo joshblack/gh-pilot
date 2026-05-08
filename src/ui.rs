@@ -24,7 +24,6 @@ const AGENT_MSG_COLOR: Color = Color::White;
 const MARKDOWN_HEADING_COLOR: Color = Color::Magenta;
 const MARKDOWN_MARKER_COLOR: Color = Color::Yellow;
 const MARKDOWN_CODE_COLOR: Color = Color::Green;
-const MARKDOWN_BLOCKQUOTE_COLOR: Color = Color::Gray;
 const MAX_LIST_MARKER_DIGITS: usize = 9;
 /// Maximum lines shown per assistant response before truncating.
 const MAX_RESPONSE_LINES: usize = 20;
@@ -380,7 +379,7 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
                         .fg(USER_MSG_COLOR)
                         .add_modifier(Modifier::BOLD),
                 )));
-                push_markdown_lines(&mut turn_lines, msg, USER_MSG_COLOR, None);
+                push_markdown_lines(&mut turn_lines, msg, AGENT_MSG_COLOR, None);
                 turn_lines.push(Line::from(Span::raw("")));
             }
             if let Some(ref resp) = turn.assistant_response {
@@ -513,7 +512,7 @@ fn markdown_line(
                 .fg(MARKDOWN_MARKER_COLOR)
                 .add_modifier(Modifier::BOLD),
         ));
-        append_inline_markdown(spans, rest, MARKDOWN_BLOCKQUOTE_COLOR)
+        append_inline_markdown(spans, rest, base_color)
     } else if let Some((marker, rest)) = split_list_marker(trimmed) {
         spans.push(Span::styled(leading_ws.to_string(), base_style));
         spans.push(Span::styled(
@@ -539,7 +538,7 @@ fn append_inline_markdown(
     while let Some(start) = rest.find('`') {
         let (before, after_start) = rest.split_at(start);
         if !before.is_empty() {
-            spans.push(Span::styled(before.to_string(), base_style));
+            append_emphasis_markdown(&mut spans, before, base_color);
         }
 
         let after_tick = &after_start[1..];
@@ -557,10 +556,59 @@ fn append_inline_markdown(
     }
 
     if !rest.is_empty() {
-        spans.push(Span::styled(rest.to_string(), base_style));
+        append_emphasis_markdown(&mut spans, rest, base_color);
     }
 
     Line::from(spans)
+}
+
+fn append_emphasis_markdown(spans: &mut Vec<Span<'static>>, text: &str, base_color: Color) {
+    let mut rest = text;
+    let base_style = Style::default().fg(base_color);
+
+    while let Some((start, marker, end)) = find_emphasis(rest) {
+        let (before, emphasized) = rest.split_at(start);
+        if !before.is_empty() {
+            spans.push(Span::styled(before.to_string(), base_style));
+        }
+
+        let token_len = marker.len();
+        let (content, after_content) = emphasized[token_len..].split_at(end);
+        let mut style = base_style;
+        if token_len >= 2 {
+            style = style.add_modifier(Modifier::BOLD);
+        }
+        if token_len == 1 || token_len == 3 {
+            style = style.add_modifier(Modifier::ITALIC);
+        }
+        spans.push(Span::styled(format!("{marker}{content}{marker}"), style));
+        rest = &after_content[token_len..];
+    }
+
+    if !rest.is_empty() {
+        spans.push(Span::styled(rest.to_string(), base_style));
+    }
+}
+
+fn find_emphasis(text: &str) -> Option<(usize, &'static str, usize)> {
+    const EMPHASIS_MARKERS: [&str; 6] = ["***", "___", "**", "__", "*", "_"];
+
+    for (index, _) in text.char_indices() {
+        let rest = &text[index..];
+        for marker in EMPHASIS_MARKERS {
+            if !rest.starts_with(marker) {
+                continue;
+            }
+            let after_marker = &rest[marker.len()..];
+            if let Some(end) = after_marker.find(marker) {
+                if end > 0 {
+                    return Some((index, marker, end));
+                }
+            }
+        }
+    }
+
+    None
 }
 
 fn is_code_fence(trimmed: &str) -> bool {
