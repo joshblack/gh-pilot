@@ -330,6 +330,9 @@ pub fn key_to_bytes(code: KeyCode, modifiers: KeyModifiers) -> Vec<u8> {
 }
 
 /// Convert mouse wheel events into xterm SGR mouse sequences for tmux.
+///
+/// The sequence format is `ESC [ < button ; column ; row M`; xterm coordinates
+/// are 1-based, while crossterm reports 0-based terminal positions.
 pub fn mouse_to_bytes(event: MouseEvent) -> Vec<u8> {
     let button = match event.kind {
         MouseEventKind::ScrollUp => 64,

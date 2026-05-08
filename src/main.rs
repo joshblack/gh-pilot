@@ -305,10 +305,8 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent) {
         },
         Mode::Terminal if app.terminal_fullscreen => {
             let bytes = mouse_to_bytes(mouse);
-            if !bytes.is_empty() {
-                if let Some(ref term) = app.embedded_terminal {
-                    term.write_input(&bytes);
-                }
+            if let (false, Some(term)) = (bytes.is_empty(), app.embedded_terminal.as_ref()) {
+                term.write_input(&bytes);
             }
         }
         _ => {}
