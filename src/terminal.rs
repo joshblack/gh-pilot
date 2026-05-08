@@ -63,11 +63,18 @@ impl EmbeddedTerminal {
         // only the embedded client that renders inside the preview panel.
         let mut cmd = CommandBuilder::new("tmux");
         if tmux_has_session(&tmux_session) {
+            cmd.arg("set-option");
+            cmd.arg("-t");
+            cmd.arg(&tmux_session);
+            cmd.arg("status");
+            cmd.arg("off");
+            cmd.arg(";");
             cmd.arg("attach-session");
             cmd.arg("-t");
             cmd.arg(&tmux_session);
         } else {
             cmd.arg("new-session");
+            cmd.arg("-d");
             cmd.arg("-s");
             cmd.arg(&tmux_session);
             if let Some(dir) = cwd {
@@ -75,6 +82,16 @@ impl EmbeddedTerminal {
                 cmd.arg(dir);
             }
             cmd.arg(copilot_command);
+            cmd.arg(";");
+            cmd.arg("set-option");
+            cmd.arg("-t");
+            cmd.arg(&tmux_session);
+            cmd.arg("status");
+            cmd.arg("off");
+            cmd.arg(";");
+            cmd.arg("attach-session");
+            cmd.arg("-t");
+            cmd.arg(&tmux_session);
         }
         // Tell copilot it's running in a color-capable terminal.
         cmd.env("TERM", "xterm-256color");

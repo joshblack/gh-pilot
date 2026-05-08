@@ -29,7 +29,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     if app.mode == Mode::Terminal && app.terminal_fullscreen {
         if let Some(ref terminal) = app.embedded_terminal {
-            draw_embedded_terminal(f, terminal, area);
+            render_vt100_screen(f, terminal, area);
         }
         if app.status_message.is_some() {
             draw_status_toast(f, app, area);

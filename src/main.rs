@@ -225,15 +225,14 @@ where
 
 /// Calculate the rows/cols available for the embedded PTY given the terminal size.
 fn embedded_terminal_size(term_size: ratatui::layout::Size, fullscreen: bool) -> (u16, u16) {
-    let (height, width) = if fullscreen {
-        (term_size.height, term_size.width)
-    } else {
-        // Body + footer(1), with the terminal in the right 65% detail panel.
-        (
-            term_size.height.saturating_sub(1),
-            term_size.width * 65 / 100,
-        )
-    };
+    if fullscreen {
+        return (term_size.height.max(1), term_size.width.max(1));
+    }
+
+    // Body + footer(1), with the terminal in the right 65% detail panel.
+    let height = term_size.height.saturating_sub(1);
+    let width = term_size.width * 65 / 100;
+
     // Subtract borders (2 each side).
     let rows = height.saturating_sub(2).max(1);
     let cols = width.saturating_sub(2).max(1); // left + right borders
