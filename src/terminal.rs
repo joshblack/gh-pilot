@@ -69,6 +69,12 @@ impl EmbeddedTerminal {
             cmd.arg("status");
             cmd.arg("off");
             cmd.arg(";");
+            cmd.arg("set-option");
+            cmd.arg("-t");
+            cmd.arg(&tmux_session);
+            cmd.arg("mouse");
+            cmd.arg("on");
+            cmd.arg(";");
             cmd.arg("attach-session");
             cmd.arg("-t");
             cmd.arg(&tmux_session);
@@ -88,6 +94,12 @@ impl EmbeddedTerminal {
             cmd.arg(&tmux_session);
             cmd.arg("status");
             cmd.arg("off");
+            cmd.arg(";");
+            cmd.arg("set-option");
+            cmd.arg("-t");
+            cmd.arg(&tmux_session);
+            cmd.arg("mouse");
+            cmd.arg("on");
             cmd.arg(";");
             cmd.arg("attach-session");
             cmd.arg("-t");
@@ -261,7 +273,7 @@ fn shell_command(copilot_bin: &Path, args: &[impl AsRef<OsStr>]) -> String {
 
 // ── Key → byte sequence mapping ──────────────────────────────────────────────
 
-use crossterm::event::{KeyCode, KeyModifiers};
+use crossterm::event::{KeyCode, KeyModifiers, MouseEvent, MouseEventKind};
 
 /// Convert a crossterm key event into the byte sequence expected by the PTY.
 pub fn key_to_bytes(code: KeyCode, modifiers: KeyModifiers) -> Vec<u8> {
@@ -315,4 +327,19 @@ pub fn key_to_bytes(code: KeyCode, modifiers: KeyModifiers) -> Vec<u8> {
         KeyCode::F(12) => vec![0x1b, b'[', b'2', b'4', b'~'],
         _ => vec![],
     }
+}
+
+/// Convert mouse wheel events into xterm SGR mouse sequences for tmux.
+pub fn mouse_to_bytes(event: MouseEvent) -> Vec<u8> {
+    let button = match event.kind {
+        MouseEventKind::ScrollUp => 64,
+        MouseEventKind::ScrollDown => 65,
+        _ => return vec![],
+    };
+    format!(
+        "\x1b[<{button};{};{}M",
+        event.column.saturating_add(1),
+        event.row.saturating_add(1)
+    )
+    .into_bytes()
 }

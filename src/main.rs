@@ -7,7 +7,8 @@ use anyhow::{Context, Result};
 use app::{App, Mode, Panel, PendingAction};
 use crossterm::{
     event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseEventKind,
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseEvent,
+        MouseEventKind,
     },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -19,7 +20,7 @@ use std::{
     path::PathBuf,
     time::{Duration, Instant},
 };
-use terminal::{key_to_bytes, EmbeddedTerminal};
+use terminal::{key_to_bytes, mouse_to_bytes, EmbeddedTerminal};
 
 fn main() -> Result<()> {
     let copilot_dir = session::copilot_dir();
@@ -198,7 +199,7 @@ where
                         status_since = Some(Instant::now());
                     }
                 }
-                Event::Mouse(mouse) => handle_mouse(app, mouse.kind),
+                Event::Mouse(mouse) => handle_mouse(app, mouse),
                 _ => {}
             }
         }
@@ -295,13 +296,21 @@ fn handle_normal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
     }
 }
 
-fn handle_mouse(app: &mut App, kind: MouseEventKind) {
-    if app.mode != Mode::Normal {
-        return;
-    }
-    match kind {
-        MouseEventKind::ScrollUp => app.scroll_detail_up(),
-        MouseEventKind::ScrollDown => app.scroll_detail_down(),
+fn handle_mouse(app: &mut App, mouse: MouseEvent) {
+    match app.mode {
+        Mode::Normal => match mouse.kind {
+            MouseEventKind::ScrollUp => app.scroll_detail_up(),
+            MouseEventKind::ScrollDown => app.scroll_detail_down(),
+            _ => {}
+        },
+        Mode::Terminal if app.terminal_fullscreen => {
+            let bytes = mouse_to_bytes(mouse);
+            if !bytes.is_empty() {
+                if let Some(ref term) = app.embedded_terminal {
+                    term.write_input(&bytes);
+                }
+            }
+        }
         _ => {}
     }
 }
