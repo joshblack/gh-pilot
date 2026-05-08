@@ -23,6 +23,8 @@ pub struct EmbeddedTerminal {
     pub child_exited: Arc<AtomicBool>,
     /// Session ID (used for display purposes).
     pub session_id: String,
+    /// tmux session that owns the Copilot CLI process.
+    tmux_session: String,
     /// Current PTY dimensions.
     pub rows: u16,
     pub cols: u16,
@@ -116,6 +118,7 @@ impl EmbeddedTerminal {
             writer: Mutex::new(writer),
             child_exited,
             session_id,
+            tmux_session,
             rows,
             cols,
             _master: master,
@@ -151,6 +154,29 @@ impl EmbeddedTerminal {
         }
         self.rows = rows;
         self.cols = cols;
+    }
+
+    /// Rename the backing tmux session to the deterministic name for `session_id`.
+    pub fn reuse_as_session(&mut self, session_id: &str) {
+        let target = tmux_session_name(session_id);
+        if self.tmux_session == target {
+            self.session_id = session_id.to_string();
+            return;
+        }
+
+        if !tmux_has_session(&target) {
+            let _ = Command::new("tmux")
+                .arg("rename-session")
+                .arg("-t")
+                .arg(&self.tmux_session)
+                .arg(&target)
+                .status();
+        }
+
+        if tmux_has_session(&target) {
+            self.tmux_session = target;
+            self.session_id = session_id.to_string();
+        }
     }
 }
 

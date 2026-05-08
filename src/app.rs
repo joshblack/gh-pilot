@@ -141,7 +141,11 @@ impl App {
     }
 
     pub fn reload(&mut self) {
-        self.sessions = load_sessions(&self.copilot_dir);
+        self.replace_sessions(load_sessions(&self.copilot_dir));
+    }
+
+    fn replace_sessions(&mut self, sessions: Vec<CopilotSession>) {
+        self.sessions = sessions;
         self.clear_missing_focused_group();
         self.flat_list = build_flat_list(
             &self.sessions,
@@ -174,22 +178,18 @@ impl App {
         self.new_session_reload_baseline.is_some()
     }
 
-    pub fn reload_if_new_session_created(&mut self) -> bool {
-        let Some(baseline) = self.new_session_reload_baseline.as_ref() else {
-            return false;
-        };
+    pub fn reload_if_new_session_created(&mut self) -> Option<String> {
+        let baseline = self.new_session_reload_baseline.as_ref()?;
 
         let sessions = load_sessions(&self.copilot_dir);
-        if !sessions
+        let new_session_id = sessions
             .iter()
-            .any(|session| !baseline.contains(&session.id))
-        {
-            return false;
-        }
+            .find(|session| !baseline.contains(&session.id))
+            .map(|session| session.id.clone())?;
 
         self.new_session_reload_baseline = None;
-        self.reload();
-        true
+        self.replace_sessions(sessions);
+        Some(new_session_id)
     }
 
     // ── Navigation ────────────────────────────────────────────────────────────

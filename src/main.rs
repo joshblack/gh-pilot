@@ -90,8 +90,6 @@ where
                             cols,
                         ) {
                             Ok(term) => {
-                                app.capture_new_session_reload_baseline();
-                                last_new_session_reload_check = None;
                                 app.embedded_terminal = Some(term);
                                 app.mode = Mode::Terminal;
                                 app.active_panel = Panel::Detail;
@@ -124,6 +122,8 @@ where
                             cols,
                         ) {
                             Ok(term) => {
+                                app.capture_new_session_reload_baseline();
+                                last_new_session_reload_check = None;
                                 app.embedded_terminal = Some(term);
                                 app.mode = Mode::Terminal;
                                 app.active_panel = Panel::Detail;
@@ -165,7 +165,10 @@ where
                 .unwrap_or(true);
         if should_check_for_new_session {
             last_new_session_reload_check = Some(Instant::now());
-            if app.reload_if_new_session_created() {
+            if let Some(new_session_id) = app.reload_if_new_session_created() {
+                if let Some(term) = app.embedded_terminal.as_mut() {
+                    term.reuse_as_session(&new_session_id);
+                }
                 last_new_session_reload_check = None;
                 app.status_message = Some("New session loaded".into());
                 status_since = Some(Instant::now());
@@ -221,8 +224,8 @@ fn embedded_terminal_size(term_size: ratatui::layout::Size, fullscreen: bool) ->
             term_size.width * 65 / 100,
         )
     };
-    // Subtract borders (2 each side) and the 1-row "LIVE" header bar.
-    let rows = height.saturating_sub(3).max(1); // 2 borders + 1 live-bar
+    // Subtract borders (2 each side).
+    let rows = height.saturating_sub(2).max(1);
     let cols = width.saturating_sub(2).max(1); // left + right borders
     (rows, cols)
 }

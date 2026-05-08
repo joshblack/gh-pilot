@@ -454,55 +454,16 @@ fn draw_embedded_terminal(
     f: &mut Frame,
     term: &crate::terminal::EmbeddedTerminal,
     area: Rect,
-    fullscreen: bool,
+    _fullscreen: bool,
 ) {
     let block = Block::default()
-        .title(format!(
-            " {} ",
-            &term.session_id[..term.session_id.len().min(20)]
-        ))
-        .title_style(
-            Style::default()
-                .fg(ACTIVE_COLOR)
-                .add_modifier(Modifier::BOLD),
-        )
         .borders(Borders::ALL)
         .border_style(Style::default().fg(ACTIVE_COLOR));
 
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    // Split into a 1-row "LIVE" banner and the vt100 render area.
-    let layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Min(1)])
-        .split(inner);
-
-    // Banner row
-    f.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(
-                " ● LIVE ",
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(ACTIVE_COLOR)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                if fullscreen {
-                    "   Ctrl+F: split view   Ctrl+W: detach  "
-                } else {
-                    "   Ctrl+F: fullscreen   Ctrl+W: detach  "
-                },
-                Style::default().fg(Color::DarkGray),
-            ),
-        ])),
-        layout[0],
-    );
-
-    // vt100 screen
-    let vt100_area = layout[1];
-    render_vt100_screen(f, term, vt100_area);
+    render_vt100_screen(f, term, inner);
 }
 
 fn render_vt100_screen(f: &mut Frame, term: &crate::terminal::EmbeddedTerminal, area: Rect) {
