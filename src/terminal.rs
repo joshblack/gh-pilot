@@ -332,24 +332,17 @@ pub fn key_to_bytes(code: KeyCode, modifiers: KeyModifiers) -> Vec<u8> {
 /// Convert mouse wheel events into xterm SGR mouse sequences for tmux.
 ///
 /// The sequence format is `ESC [ < button ; column ; row M`; xterm coordinates
-/// are 1-based relative to the embedded PTY, while crossterm reports 0-based
-/// positions relative to the full TUI.
-pub fn mouse_to_bytes(event: MouseEvent, origin_col: u16, origin_row: u16) -> Vec<u8> {
+/// are 1-based, while crossterm reports 0-based terminal positions.
+pub fn mouse_to_bytes(event: MouseEvent) -> Vec<u8> {
     let button = match event.kind {
         MouseEventKind::ScrollUp => 64,
         MouseEventKind::ScrollDown => 65,
         _ => return vec![],
     };
-    let Some(column) = event.column.checked_sub(origin_col) else {
-        return vec![];
-    };
-    let Some(row) = event.row.checked_sub(origin_row) else {
-        return vec![];
-    };
     format!(
         "\x1b[<{button};{};{}M",
-        column.saturating_add(1),
-        row.saturating_add(1)
+        event.column.saturating_add(1),
+        event.row.saturating_add(1)
     )
     .into_bytes()
 }
