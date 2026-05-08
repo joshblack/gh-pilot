@@ -3,6 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+/// Keep generated tmux session names aligned with the terminal module's limit.
+const TMUX_SESSION_NAME_MAX_LEN: usize = 80;
+
 // ── Status ──────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq)]
@@ -390,7 +393,7 @@ fn tmux_session_name(session_id: &str) -> String {
                 '_'
             }
         })
-        .take(80)
+        .take(TMUX_SESSION_NAME_MAX_LEN)
         .collect();
     format!("ghmc_{sanitized}")
 }

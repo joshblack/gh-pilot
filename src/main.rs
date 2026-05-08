@@ -334,6 +334,7 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent, term_size: Size) {
     }
 }
 
+/// Calculates the drawable area inside a bordered block by removing its border cells.
 struct BlockArea(Rect);
 
 impl BlockArea {

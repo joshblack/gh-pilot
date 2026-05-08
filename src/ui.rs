@@ -127,7 +127,11 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
                 let is_cursor = app.cursor == flat_idx;
                 let is_collapsed = app.collapsed_groups.contains(path);
                 let is_focused_group = app.focused_group.as_deref() == Some(path.as_str());
-                let prefix = if is_cursor && is_focused { "❯ " } else { "" };
+                let prefix = if is_cursor && is_focused {
+                    "❯ "
+                } else {
+                    "  "
+                };
                 let marker = if is_collapsed { "▸ " } else { "▾ " };
                 let focus_suffix = if is_focused_group { "  focused" } else { "" };
                 let style = if is_cursor && is_focused {
@@ -252,12 +256,12 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
         f.render_widget(block, area);
         let msg = Paragraph::new(Text::from(vec![
             Line::from(Span::styled(
-                "Select a session.",
+                "Select a session",
                 Style::default().fg(Color::DarkGray),
             )),
             Line::from(Span::raw("")),
             Line::from(Span::styled(
-                "Open it to show a live terminal session.",
+                "Open it to show a live terminal session",
                 Style::default().fg(Color::DarkGray),
             )),
         ]))
