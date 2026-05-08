@@ -231,6 +231,8 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_stateful_widget(list, inner, &mut list_state);
 }
 
+/// Calculate the half-open `[start, end)` range of session-list rows to render,
+/// keeping `cursor` visible and centered when possible.
 fn visible_flat_range(cursor: usize, len: usize, height: usize) -> (usize, usize) {
     if len == 0 || height == 0 {
         return (0, 0);
@@ -670,5 +672,10 @@ mod tests {
     #[test]
     fn visible_flat_range_keeps_cursor_visible_near_end() {
         assert_eq!(visible_flat_range(99, 100, 10), (90, 100));
+    }
+
+    #[test]
+    fn visible_flat_range_clamps_cursor_past_end() {
+        assert_eq!(visible_flat_range(200, 100, 10), (90, 100));
     }
 }
