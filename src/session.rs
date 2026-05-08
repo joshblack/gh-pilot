@@ -6,15 +6,19 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SessionStatus {
-    Active,
-    Inactive,
+    Running,
+    Waiting,
+    Idle,
+    Error,
 }
 
 impl SessionStatus {
     pub fn label(&self) -> &str {
         match self {
-            SessionStatus::Active => "Active",
-            SessionStatus::Inactive => "Inactive",
+            SessionStatus::Running => "Running",
+            SessionStatus::Waiting => "Waiting",
+            SessionStatus::Idle => "Idle",
+            SessionStatus::Error => "Error",
         }
     }
 }
@@ -128,12 +132,7 @@ pub fn load_sessions(copilot_dir: &Path) -> Vec<CopilotSession> {
             if let Some(mut session) = parse_workspace_yaml(&content) {
                 // Try to enrich with summary from SQLite
                 session.summary = load_summary_from_db(&db_path, &session.id).or(session.summary);
-                // Detect if active
-                session.status = if is_session_active(&session.id) {
-                    SessionStatus::Active
-                } else {
-                    SessionStatus::Inactive
-                };
+                session.status = detect_session_status(&db_path, &session.id);
                 sessions.push(session);
             }
         }
@@ -268,7 +267,7 @@ fn parse_workspace_yaml(content: &str) -> Option<CopilotSession> {
         user_named,
         created_at,
         updated_at,
-        status: SessionStatus::Inactive, // will be updated by caller
+        status: SessionStatus::Idle, // will be updated by caller
     })
 }
 
@@ -283,6 +282,54 @@ fn load_summary_from_db(db_path: &Path, session_id: &str) -> Option<String> {
     .ok()
     .flatten()
     .filter(|s| !s.is_empty())
+}
+
+fn detect_session_status(db_path: &Path, session_id: &str) -> SessionStatus {
+    if !is_session_active(session_id) {
+        return SessionStatus::Idle;
+    }
+
+    match load_latest_turn_from_db(db_path, session_id) {
+        Some((_, Some(response))) if response_indicates_error(&response) => SessionStatus::Error,
+        Some((Some(user_message), assistant_response))
+            if !user_message.trim().is_empty()
+                && assistant_response
+                    .as_deref()
+                    .map(str::trim)
+                    .unwrap_or_default()
+                    .is_empty() =>
+        {
+            SessionStatus::Running
+        }
+        _ => SessionStatus::Waiting,
+    }
+}
+
+fn load_latest_turn_from_db(
+    db_path: &Path,
+    session_id: &str,
+) -> Option<(Option<String>, Option<String>)> {
+    let conn = rusqlite::Connection::open(db_path).ok()?;
+    conn.query_row(
+        "SELECT user_message, assistant_response \
+         FROM turns WHERE session_id = ? ORDER BY turn_index DESC LIMIT 1",
+        [session_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )
+    .ok()
+}
+
+fn response_indicates_error(response: &str) -> bool {
+    let response = response.to_ascii_lowercase();
+    [
+        "something went wrong",
+        "encountered an error",
+        "failed to",
+        "fatal error",
+        "panic",
+    ]
+    .iter()
+    .any(|needle| response.contains(needle))
 }
 
 /// Check if a copilot session is currently active by scanning running processes.

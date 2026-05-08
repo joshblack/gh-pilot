@@ -65,6 +65,7 @@ where
     let mut last_tick = Instant::now();
     let mut status_since: Option<Instant> = None;
     let mut last_new_session_reload_check: Option<Instant> = None;
+    let mut last_status_poll = Instant::now();
 
     loop {
         resize_embedded_terminal(app, terminal.size()?);
@@ -177,6 +178,11 @@ where
                 });
                 status_since = Some(Instant::now());
             }
+        }
+
+        if last_status_poll.elapsed() >= app.status_poll_interval() {
+            app.reload();
+            last_status_poll = Instant::now();
         }
 
         // ── Event handling ────────────────────────────────────────────────────

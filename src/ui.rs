@@ -11,8 +11,10 @@ use ratatui::{
     Frame,
 };
 
-const ACTIVE_COLOR: Color = Color::Green;
-const INACTIVE_COLOR: Color = Color::DarkGray;
+const RUNNING_COLOR: Color = Color::Green;
+const WAITING_COLOR: Color = Color::Yellow;
+const IDLE_COLOR: Color = Color::DarkGray;
+const ERROR_COLOR: Color = Color::Red;
 const ACCENT_COLOR: Color = Color::Cyan;
 const HEADER_COLOR: Color = Color::Magenta;
 const LOAD_MORE_COLOR: Color = Color::Yellow;
@@ -158,10 +160,7 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
                 let is_cursor = app.cursor == flat_idx;
                 let is_selected = app.selected_session == Some(*idx);
 
-                let (status_color, status_sym) = match session.status {
-                    SessionStatus::Active => (ACTIVE_COLOR, "● "),
-                    SessionStatus::Inactive => (INACTIVE_COLOR, "○ "),
-                };
+                let (status_color, status_sym) = status_display(&session.status);
 
                 let name = session.display_name();
                 let time_str = session.updated_at.format("%m/%d %H:%M").to_string();
@@ -293,10 +292,7 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
         .split(inner);
 
     // Info card
-    let (status_color, status_sym) = match session.status {
-        SessionStatus::Active => (ACTIVE_COLOR, "●"),
-        SessionStatus::Inactive => (INACTIVE_COLOR, "○"),
-    };
+    let (status_color, status_sym) = status_display(&session.status);
 
     let mut info_lines = vec![
         Line::from(vec![
@@ -445,6 +441,15 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
             .begin_symbol(Some("↑"))
             .end_symbol(Some("↓"));
         f.render_stateful_widget(scrollbar, layout[1], &mut scroll_state);
+    }
+}
+
+fn status_display(status: &SessionStatus) -> (Color, &'static str) {
+    match status {
+        SessionStatus::Running => (RUNNING_COLOR, "●"),
+        SessionStatus::Waiting => (WAITING_COLOR, "◐"),
+        SessionStatus::Idle => (IDLE_COLOR, "○"),
+        SessionStatus::Error => (ERROR_COLOR, "✕"),
     }
 }
 

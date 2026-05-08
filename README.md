@@ -11,7 +11,7 @@ A **terminal session manager for AI coding agents** — a `gh` extension written
 - **Reads real Copilot CLI sessions** from `~/.copilot/session-state/` — no extra configuration
 - **Split-pane TUI** — sessions list on the left, session detail/conversation on the right
 - **Sessions grouped by working directory** and sorted newest-first
-- **Active / Inactive** status indicators (`●` / `○`) — active means a copilot process is currently running
+- **Smart status polling** with Running (`●` green), Waiting (`◐` yellow), Idle (`○` gray), and Error (`✕` red) indicators
 - **Conversation history** — view user messages and Copilot responses in the detail pane
 - **Vim-style navigation** — `j`/`k` to move, `Enter`/`Space` to view detail
 - **Launch new sessions** — `n` to start `copilot -C <dir>` with the current directory pre-filled
@@ -121,4 +121,3 @@ copilot --name="my feature"
 # Resume a previous session
 copilot --resume=<session-id>
 ```
-
