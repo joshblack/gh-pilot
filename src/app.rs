@@ -1,6 +1,9 @@
-use crate::session::{group_sessions, load_sessions, CopilotSession, SessionStatus};
+use crate::session::{
+    group_sessions, load_sessions, load_turns, session_db_path, CopilotSession, SessionStatus, Turn,
+};
 use crate::terminal::EmbeddedTerminal;
-use std::collections::HashSet;
+use chrono::{DateTime, Utc};
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 /// How many sessions to show per directory group before a "Load more" item.
@@ -56,6 +59,18 @@ pub enum FlatItem {
     },
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConversationLine {
+    Empty,
+    NoHistory,
+    UserHeader,
+    UserText(String),
+    AssistantHeader,
+    AssistantText(String),
+    Truncated,
+    Separator(i64),
+}
+
 // ── App ──────────────────────────────────────────────────────────────────────
 
 pub struct App {
@@ -85,6 +100,10 @@ pub struct App {
     pub collapsed_groups: HashSet<String>,
     /// When set, only sessions in this directory group are shown.
     pub focused_group: Option<String>,
+    /// Cached conversation turns by session id and session update time.
+    conversation_cache: HashMap<String, (DateTime<Utc>, Vec<Turn>)>,
+    /// Cached conversation preview lines by session id, session update time, and response limit.
+    conversation_line_cache: HashMap<String, (DateTime<Utc>, usize, Vec<ConversationLine>)>,
     /// A live copilot session embedded in the right panel, if any.
     pub embedded_terminal: Option<EmbeddedTerminal>,
     /// Whether the embedded terminal is taking the full TUI area.
@@ -135,6 +154,8 @@ impl App {
             expanded_groups,
             collapsed_groups,
             focused_group,
+            conversation_cache: HashMap::new(),
+            conversation_line_cache: HashMap::new(),
             embedded_terminal: None,
             terminal_fullscreen: false,
         }
@@ -276,6 +297,53 @@ impl App {
 
     pub fn scroll_detail_page_down(&mut self) {
         self.detail_scroll += DETAIL_PAGE_SCROLL_AMOUNT;
+    }
+
+    pub fn selected_turns(&mut self) -> Option<&[Turn]> {
+        let idx = self.selected_session?;
+        let session = self.sessions.get(idx)?;
+        let id = session.id.clone();
+        let updated_at = session.updated_at;
+        let db_path = session_db_path(&self.copilot_dir);
+        let entry = self
+            .conversation_cache
+            .entry(id.clone())
+            .or_insert_with(|| (updated_at, load_turns(&db_path, &id)));
+        if entry.0 != updated_at {
+            *entry = (updated_at, load_turns(&db_path, &id));
+        }
+        Some(&entry.1)
+    }
+
+    pub fn selected_conversation_lines(
+        &mut self,
+        max_response_lines: usize,
+    ) -> Option<&[ConversationLine]> {
+        let idx = self.selected_session?;
+        let session = self.sessions.get(idx)?;
+        let id = session.id.clone();
+        let updated_at = session.updated_at;
+
+        let is_stale = self
+            .conversation_line_cache
+            .get(&id)
+            .map(|(cached_at, cached_limit, _)| {
+                *cached_at != updated_at || *cached_limit != max_response_lines
+            })
+            .unwrap_or(true);
+
+        if is_stale {
+            let lines = self
+                .selected_turns()
+                .map(|turns| conversation_lines_from_turns(turns, max_response_lines))
+                .unwrap_or_else(|| vec![ConversationLine::NoHistory]);
+            self.conversation_line_cache
+                .insert(id.clone(), (updated_at, max_response_lines, lines));
+        }
+
+        self.conversation_line_cache
+            .get(&id)
+            .map(|(_, _, lines)| lines.as_slice())
     }
 
     // ── Group expand / collapse ───────────────────────────────────────────────
@@ -464,6 +532,41 @@ impl App {
     }
 }
 
+fn conversation_lines_from_turns(
+    turns: &[Turn],
+    max_response_lines: usize,
+) -> Vec<ConversationLine> {
+    if turns.is_empty() {
+        return vec![ConversationLine::NoHistory];
+    }
+
+    let mut lines = Vec::new();
+    for turn in turns {
+        if let Some(ref msg) = turn.user_message {
+            lines.push(ConversationLine::UserHeader);
+            lines.extend(
+                msg.lines()
+                    .map(|line| ConversationLine::UserText(line.to_string())),
+            );
+            lines.push(ConversationLine::Empty);
+        }
+        if let Some(ref resp) = turn.assistant_response {
+            lines.push(ConversationLine::AssistantHeader);
+            let mut response_lines = resp.lines();
+            for line in response_lines.by_ref().take(max_response_lines) {
+                lines.push(ConversationLine::AssistantText(line.to_string()));
+            }
+            if response_lines.next().is_some() {
+                lines.push(ConversationLine::Truncated);
+            }
+            lines.push(ConversationLine::Empty);
+        }
+        lines.push(ConversationLine::Separator(turn.turn_index + 1));
+        lines.push(ConversationLine::Empty);
+    }
+    lines
+}
+
 // ── Build flat list ───────────────────────────────────────────────────────────
 
 fn build_flat_list(
@@ -505,4 +608,44 @@ fn build_flat_list(
     }
 
     flat
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{conversation_lines_from_turns, ConversationLine};
+    use crate::session::Turn;
+
+    #[test]
+    fn conversation_lines_from_turns_handles_empty_history() {
+        assert_eq!(
+            conversation_lines_from_turns(&[], 20),
+            vec![ConversationLine::NoHistory]
+        );
+    }
+
+    #[test]
+    fn conversation_lines_from_turns_truncates_long_responses() {
+        let turns = vec![Turn {
+            turn_index: 0,
+            user_message: Some("hello".into()),
+            assistant_response: Some("one\ntwo\nthree".into()),
+            timestamp: String::new(),
+        }];
+
+        assert_eq!(
+            conversation_lines_from_turns(&turns, 2),
+            vec![
+                ConversationLine::UserHeader,
+                ConversationLine::UserText("hello".into()),
+                ConversationLine::Empty,
+                ConversationLine::AssistantHeader,
+                ConversationLine::AssistantText("one".into()),
+                ConversationLine::AssistantText("two".into()),
+                ConversationLine::Truncated,
+                ConversationLine::Empty,
+                ConversationLine::Separator(1),
+                ConversationLine::Empty,
+            ]
+        );
+    }
 }

@@ -1,5 +1,5 @@
-use crate::app::{App, FlatItem, Mode, Panel};
-use crate::session::{load_turns, session_db_path, SessionStatus};
+use crate::app::{App, ConversationLine, FlatItem, Mode, Panel};
+use crate::session::SessionStatus;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Position, Rect},
     style::{Color, Modifier, Style},
@@ -366,69 +366,24 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
         .wrap(Wrap { trim: false });
     f.render_widget(info_card, layout[0]);
 
-    // Conversation turns
-    let db_path = session_db_path(&app.copilot_dir);
-    let turns = load_turns(&db_path, &session.id);
-
-    let mut turn_lines: Vec<Line> = Vec::new();
-
-    if turns.is_empty() {
-        turn_lines.push(Line::from(Span::styled(
-            "  No conversation history yet.",
-            Style::default().fg(Color::DarkGray),
-        )));
-    } else {
-        for turn in &turns {
-            if let Some(ref msg) = turn.user_message {
-                turn_lines.push(Line::from(Span::styled(
-                    "  You",
-                    Style::default()
-                        .fg(USER_MSG_COLOR)
-                        .add_modifier(Modifier::BOLD),
-                )));
-                for line in msg.lines() {
-                    turn_lines.push(Line::from(Span::styled(
-                        format!("  {line}"),
-                        Style::default().fg(USER_MSG_COLOR),
-                    )));
-                }
-                turn_lines.push(Line::from(Span::raw("")));
-            }
-            if let Some(ref resp) = turn.assistant_response {
-                turn_lines.push(Line::from(Span::styled(
-                    "  Copilot",
-                    Style::default()
-                        .fg(AGENT_MSG_COLOR)
-                        .add_modifier(Modifier::BOLD),
-                )));
-                for line in resp.lines().take(MAX_RESPONSE_LINES) {
-                    turn_lines.push(Line::from(Span::styled(
-                        format!("  {line}"),
-                        Style::default().fg(AGENT_MSG_COLOR),
-                    )));
-                }
-                if resp.lines().count() > MAX_RESPONSE_LINES {
-                    turn_lines.push(Line::from(Span::styled(
-                        "  … (truncated)",
-                        Style::default().fg(Color::DarkGray),
-                    )));
-                }
-                turn_lines.push(Line::from(Span::raw("")));
-            }
-            turn_lines.push(Line::from(Span::styled(
-                format!("  ─── Turn {} ", turn.turn_index + 1),
-                Style::default().fg(Color::DarkGray),
-            )));
-            turn_lines.push(Line::from(Span::raw("")));
-        }
-    }
-
-    let total_lines = turn_lines.len();
     let visible_height = layout[1].height as usize;
-    let max_scroll = total_lines.saturating_sub(visible_height);
-    if app.detail_scroll > max_scroll {
-        app.detail_scroll = max_scroll;
-    }
+    let requested_scroll = app.detail_scroll;
+    let (total_lines, detail_scroll, turn_lines) = {
+        let conversation_lines = app
+            .selected_conversation_lines(MAX_RESPONSE_LINES)
+            .unwrap_or(&[]);
+        let total_lines = conversation_lines.len();
+        let max_scroll = total_lines.saturating_sub(visible_height);
+        let detail_scroll = requested_scroll.min(max_scroll);
+        let start = detail_scroll.min(total_lines);
+        let end = (start + visible_height).min(total_lines);
+        let turn_lines: Vec<Line> = conversation_lines[start..end]
+            .iter()
+            .map(conversation_line_to_ratatui)
+            .collect();
+        (total_lines, detail_scroll, turn_lines)
+    };
+    app.detail_scroll = detail_scroll;
 
     let turns_para = Paragraph::new(Text::from(turn_lines))
         .block(
@@ -437,7 +392,6 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
                 .title_style(Style::default().fg(Color::Gray))
                 .borders(Borders::NONE),
         )
-        .scroll((app.detail_scroll as u16, 0))
         .wrap(Wrap { trim: false });
     f.render_widget(turns_para, layout[1]);
 
@@ -447,6 +401,44 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
             .begin_symbol(Some("↑"))
             .end_symbol(Some("↓"));
         f.render_stateful_widget(scrollbar, layout[1], &mut scroll_state);
+    }
+}
+
+fn conversation_line_to_ratatui(line: &ConversationLine) -> Line<'static> {
+    match line {
+        ConversationLine::Empty => Line::from(Span::raw("")),
+        ConversationLine::NoHistory => Line::from(Span::styled(
+            "  No conversation history yet.",
+            Style::default().fg(Color::DarkGray),
+        )),
+        ConversationLine::UserHeader => Line::from(Span::styled(
+            "  You",
+            Style::default()
+                .fg(USER_MSG_COLOR)
+                .add_modifier(Modifier::BOLD),
+        )),
+        ConversationLine::UserText(text) => Line::from(Span::styled(
+            format!("  {text}"),
+            Style::default().fg(USER_MSG_COLOR),
+        )),
+        ConversationLine::AssistantHeader => Line::from(Span::styled(
+            "  Copilot",
+            Style::default()
+                .fg(AGENT_MSG_COLOR)
+                .add_modifier(Modifier::BOLD),
+        )),
+        ConversationLine::AssistantText(text) => Line::from(Span::styled(
+            format!("  {text}"),
+            Style::default().fg(AGENT_MSG_COLOR),
+        )),
+        ConversationLine::Truncated => Line::from(Span::styled(
+            "  … (truncated)",
+            Style::default().fg(Color::DarkGray),
+        )),
+        ConversationLine::Separator(turn) => Line::from(Span::styled(
+            format!("  ─── Turn {turn} "),
+            Style::default().fg(Color::DarkGray),
+        )),
     }
 }
 
