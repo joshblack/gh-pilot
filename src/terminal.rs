@@ -71,7 +71,6 @@ impl EmbeddedTerminal {
             if let Some(dir) = cwd {
                 cmd.arg("-c");
                 cmd.arg(dir);
-                cmd.cwd(dir);
             }
             cmd.arg(copilot_command);
         }

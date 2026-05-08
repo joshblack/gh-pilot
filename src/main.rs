@@ -76,12 +76,12 @@ where
                 let (rows, cols) = embedded_terminal_size(term_size, app.terminal_fullscreen);
                 match copilot_binary() {
                     Some(bin) => {
-                        let cwd_str = cwd.to_string_lossy().to_string();
+                        let cwd_arg = cwd.to_string_lossy();
                         let resume_arg = format!("--resume={id}");
                         match EmbeddedTerminal::spawn(
                             id.clone(),
                             &bin,
-                            &["-C", cwd_str.as_str(), resume_arg.as_str()],
+                            &["-C", cwd_arg.as_ref(), resume_arg.as_str()],
                             Some(&cwd),
                             rows,
                             cols,
