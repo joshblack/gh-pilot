@@ -239,9 +239,9 @@ fn parse_workspace_yaml(content: &str) -> Option<CopilotSession> {
     let id = map.get("id")?.to_string();
     let cwd = map
         .get("cwd")
-        .map(|s| PathBuf::from(s))
+        .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/"));
-    let git_root = map.get("git_root").map(|s| PathBuf::from(s));
+    let git_root = map.get("git_root").map(PathBuf::from);
     let repository = map.get("repository").map(|s| s.to_string());
     let branch = map.get("branch").map(|s| s.to_string());
     let user_named = matches!(map.get("user_named"), Some(&"true"));
@@ -313,4 +313,3 @@ fn is_session_active(session_id: &str) -> bool {
         false
     }
 }
-

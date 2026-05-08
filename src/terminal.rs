@@ -1,11 +1,13 @@
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+use std::ffi::OsStr;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
 };
 use std::thread;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// An embedded copilot terminal session running inside the right detail panel.
 pub struct EmbeddedTerminal {
@@ -27,13 +29,13 @@ pub struct EmbeddedTerminal {
 }
 
 impl EmbeddedTerminal {
-    /// Spawn `copilot_bin` with `args` inside a PTY of size `rows × cols`,
+    /// Spawn `copilot_bin` with `args` inside a tmux-managed PTY of size `rows × cols`,
     /// with the working directory set to `cwd`.
     pub fn spawn(
         session_id: String,
-        copilot_bin: &PathBuf,
-        args: &[impl AsRef<std::ffi::OsStr>],
-        cwd: Option<&std::path::Path>,
+        copilot_bin: &Path,
+        args: &[impl AsRef<OsStr>],
+        cwd: Option<&Path>,
         rows: u16,
         cols: u16,
     ) -> anyhow::Result<Self> {
@@ -49,15 +51,22 @@ impl EmbeddedTerminal {
         let slave = pair.slave;
         let master = pair.master;
 
-        // Build the child command.
-        let mut cmd = CommandBuilder::new(copilot_bin);
-        for arg in args {
-            cmd.arg(arg);
-        }
-        // Set the working directory to the session's cwd so copilot opens in the right project.
+        let tmux_session = tmux_session_name(&session_id);
+        let copilot_command = shell_command(copilot_bin, args);
+
+        // Attach to an existing tmux session for this copilot session, or create
+        // one in the session's cwd. tmux owns the CLI process; the PTY here is
+        // only the embedded client that renders inside the preview panel.
+        let mut cmd = CommandBuilder::new("tmux");
+        cmd.arg("new-session");
+        cmd.arg("-A");
+        cmd.arg("-s");
+        cmd.arg(&tmux_session);
         if let Some(dir) = cwd {
-            cmd.cwd(dir);
+            cmd.arg("-c");
+            cmd.arg(dir);
         }
+        cmd.arg(copilot_command);
         // Tell copilot it's running in a color-capable terminal.
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
@@ -118,6 +127,46 @@ impl EmbeddedTerminal {
     pub fn is_exited(&self) -> bool {
         self.child_exited.load(Ordering::Relaxed)
     }
+}
+
+fn tmux_session_name(session_id: &str) -> String {
+    let suffix = if session_id == "new" {
+        let millis = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        format!("new_{millis}")
+    } else {
+        session_id.to_string()
+    };
+
+    let sanitized: String = suffix
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+
+    format!("ghmc_{}", sanitized.chars().take(80).collect::<String>())
+}
+
+fn shell_command(copilot_bin: &Path, args: &[impl AsRef<OsStr>]) -> String {
+    std::iter::once(shell_quote(copilot_bin.as_os_str()))
+        .chain(args.iter().map(|arg| shell_quote(arg.as_ref())))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn shell_quote(value: &OsStr) -> String {
+    let value = value.to_string_lossy();
+    if value.is_empty() {
+        return "''".to_string();
+    }
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 // ── Key → byte sequence mapping ──────────────────────────────────────────────
