@@ -12,12 +12,12 @@ use crossterm::{
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 use session::copilot_binary;
-use terminal::{key_to_bytes, EmbeddedTerminal};
 use std::{
     io,
     path::PathBuf,
     time::{Duration, Instant},
 };
+use terminal::{key_to_bytes, EmbeddedTerminal};
 
 fn main() -> Result<()> {
     let copilot_dir = session::copilot_dir();
@@ -64,6 +64,7 @@ where
     let mut status_since: Option<Instant> = None;
 
     loop {
+        resize_embedded_terminal(app, terminal.size()?);
         terminal.draw(|f| ui::draw(f, app))?;
 
         // ── Spawn pending embedded terminals ─────────────────────────────────
@@ -72,14 +73,15 @@ where
             PendingAction::None => {}
             PendingAction::OpenEmbedded { id, cwd } => {
                 let term_size = terminal.size()?;
-                let (rows, cols) = embedded_terminal_size(term_size);
+                let (rows, cols) = embedded_terminal_size(term_size, app.terminal_fullscreen);
                 match copilot_binary() {
                     Some(bin) => {
+                        let cwd_str = cwd.to_string_lossy().to_string();
                         let resume_arg = format!("--resume={id}");
                         match EmbeddedTerminal::spawn(
                             id.clone(),
                             &bin,
-                            &[resume_arg.as_str()],
+                            &["-C", cwd_str.as_str(), resume_arg.as_str()],
                             Some(&cwd),
                             rows,
                             cols,
@@ -88,6 +90,7 @@ where
                                 app.embedded_terminal = Some(term);
                                 app.mode = Mode::Terminal;
                                 app.active_panel = Panel::Detail;
+                                app.terminal_fullscreen = false;
                             }
                             Err(e) => {
                                 app.status_message = Some(format!("Failed to open: {e}"));
@@ -103,7 +106,7 @@ where
             }
             PendingAction::LaunchNew { dir } => {
                 let term_size = terminal.size()?;
-                let (rows, cols) = embedded_terminal_size(term_size);
+                let (rows, cols) = embedded_terminal_size(term_size, app.terminal_fullscreen);
                 match copilot_binary() {
                     Some(bin) => {
                         let dir_str = dir.to_string_lossy().to_string();
@@ -119,6 +122,7 @@ where
                                 app.embedded_terminal = Some(term);
                                 app.mode = Mode::Terminal;
                                 app.active_panel = Panel::Detail;
+                                app.terminal_fullscreen = false;
                             }
                             Err(e) => {
                                 app.status_message = Some(format!("Failed to launch: {e}"));
@@ -143,6 +147,7 @@ where
         if exited {
             app.embedded_terminal = None;
             app.mode = Mode::Normal;
+            app.terminal_fullscreen = false;
             app.reload();
             app.status_message = Some("Session ended".into());
             status_since = Some(Instant::now());
@@ -183,15 +188,30 @@ where
 }
 
 /// Calculate the rows/cols available for the embedded PTY given the terminal size.
-fn embedded_terminal_size(term_size: ratatui::layout::Size) -> (u16, u16) {
-    // Outer layout: header(3) + body + footer(3) → body_height = total - 6
-    let body_height = term_size.height.saturating_sub(6);
-    // Right panel is 65% of total width.
-    let panel_width = term_size.width * 65 / 100;
+fn embedded_terminal_size(term_size: ratatui::layout::Size, fullscreen: bool) -> (u16, u16) {
+    let (height, width) = if fullscreen {
+        (term_size.height, term_size.width)
+    } else {
+        // Body + footer(3), with the terminal in the right 65% detail panel.
+        (
+            term_size.height.saturating_sub(3),
+            term_size.width * 65 / 100,
+        )
+    };
     // Subtract borders (2 each side) and the 1-row "LIVE" header bar.
-    let rows = body_height.saturating_sub(3).max(1); // 2 borders + 1 live-bar
-    let cols = panel_width.saturating_sub(2).max(1); // left + right borders
+    let rows = height.saturating_sub(3).max(1); // 2 borders + 1 live-bar
+    let cols = width.saturating_sub(2).max(1); // left + right borders
     (rows, cols)
+}
+
+fn resize_embedded_terminal(app: &mut App, term_size: ratatui::layout::Size) {
+    if app.mode != Mode::Terminal {
+        return;
+    }
+    let (rows, cols) = embedded_terminal_size(term_size, app.terminal_fullscreen);
+    if let Some(term) = app.embedded_terminal.as_mut() {
+        term.resize(rows, cols);
+    }
 }
 
 fn handle_key(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
@@ -252,6 +272,11 @@ fn handle_terminal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
         app.detach_terminal();
         return;
     }
+    // Ctrl+F toggles fullscreen without sending the key to Copilot.
+    if key == KeyCode::Char('f') && modifiers.contains(KeyModifiers::CONTROL) {
+        app.toggle_terminal_fullscreen();
+        return;
+    }
     // Forward all other keys as byte sequences to the PTY.
     let bytes = key_to_bytes(key, modifiers);
     if !bytes.is_empty() {
@@ -260,4 +285,3 @@ fn handle_terminal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
         }
     }
 }
-

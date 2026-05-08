@@ -2,6 +2,7 @@ use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::ffi::OsStr;
 use std::io::Read;
 use std::path::Path;
+use std::process::{Command, Stdio};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
@@ -22,10 +23,8 @@ pub struct EmbeddedTerminal {
     pub child_exited: Arc<AtomicBool>,
     /// Session ID (used for display purposes).
     pub session_id: String,
-    /// PTY dimensions at spawn time.
-    #[allow(dead_code)]
+    /// Current PTY dimensions.
     pub rows: u16,
-    #[allow(dead_code)]
     pub cols: u16,
     /// Keeps the master PTY file descriptor open for the lifetime of this struct.
     _master: Box<dyn portable_pty::MasterPty + Send>,
@@ -61,15 +60,21 @@ impl EmbeddedTerminal {
         // one in the session's cwd. tmux owns the CLI process; the PTY here is
         // only the embedded client that renders inside the preview panel.
         let mut cmd = CommandBuilder::new("tmux");
-        cmd.arg("new-session");
-        cmd.arg("-A");
-        cmd.arg("-s");
-        cmd.arg(&tmux_session);
-        if let Some(dir) = cwd {
-            cmd.arg("-c");
-            cmd.arg(dir);
+        if tmux_has_session(&tmux_session) {
+            cmd.arg("attach-session");
+            cmd.arg("-t");
+            cmd.arg(&tmux_session);
+        } else {
+            cmd.arg("new-session");
+            cmd.arg("-s");
+            cmd.arg(&tmux_session);
+            if let Some(dir) = cwd {
+                cmd.arg("-c");
+                cmd.arg(dir);
+                cmd.cwd(dir);
+            }
+            cmd.arg(copilot_command);
         }
-        cmd.arg(copilot_command);
         // Tell copilot it's running in a color-capable terminal.
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
@@ -130,6 +135,36 @@ impl EmbeddedTerminal {
     pub fn is_exited(&self) -> bool {
         self.child_exited.load(Ordering::Relaxed)
     }
+
+    pub fn resize(&mut self, rows: u16, cols: u16) {
+        if self.rows == rows && self.cols == cols {
+            return;
+        }
+        let size = PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        let _ = self._master.resize(size);
+        if let Ok(mut parser) = self.parser.lock() {
+            parser.screen_mut().set_size(rows, cols);
+        }
+        self.rows = rows;
+        self.cols = cols;
+    }
+}
+
+fn tmux_has_session(tmux_session: &str) -> bool {
+    Command::new("tmux")
+        .arg("has-session")
+        .arg("-t")
+        .arg(tmux_session)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 fn tmux_session_name(session_id: &str) -> String {
@@ -164,8 +199,10 @@ fn tmux_session_name(session_id: &str) -> String {
 }
 
 fn shell_command(copilot_bin: &Path, args: &[impl AsRef<OsStr>]) -> String {
-    let words = std::iter::once(copilot_bin.as_os_str().to_string_lossy().to_string())
-        .chain(args.iter().map(|arg| arg.as_ref().to_string_lossy().to_string()));
+    let words = std::iter::once(copilot_bin.as_os_str().to_string_lossy().to_string()).chain(
+        args.iter()
+            .map(|arg| arg.as_ref().to_string_lossy().to_string()),
+    );
     shell_words::join(words)
 }
 

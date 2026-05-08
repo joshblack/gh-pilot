@@ -25,18 +25,23 @@ const MAX_RESPONSE_LINES: usize = 20;
 pub fn draw(f: &mut Frame, app: &mut App) {
     let area = f.area();
 
+    if app.mode == Mode::Terminal && app.terminal_fullscreen {
+        if let Some(ref terminal) = app.embedded_terminal {
+            draw_embedded_terminal(f, terminal, area, true);
+        }
+        if app.status_message.is_some() {
+            draw_status_toast(f, app, area);
+        }
+        return;
+    }
+
     let outer = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(0),
-            Constraint::Length(3),
-        ])
+        .constraints([Constraint::Min(0), Constraint::Length(3)])
         .split(area);
 
-    draw_header(f, app, outer[0]);
-    draw_body(f, app, outer[1]);
-    draw_footer(f, app, outer[2]);
+    draw_body(f, app, outer[0]);
+    draw_footer(f, app, outer[1]);
 
     // Overlays
     if app.mode == Mode::NewSessionDir {
@@ -51,42 +56,6 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     if app.status_message.is_some() {
         draw_status_toast(f, app, area);
     }
-}
-
-fn draw_header(f: &mut Frame, app: &App, area: Rect) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(ACCENT_COLOR));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-
-    let layout = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Fill(1), Constraint::Length(32)])
-        .split(inner);
-
-    f.render_widget(
-        Paragraph::new(Span::styled(
-            " ⚡ gh-mission-control ",
-            Style::default()
-                .fg(ACCENT_COLOR)
-                .add_modifier(Modifier::BOLD),
-        ))
-        .alignment(Alignment::Left),
-        layout[0],
-    );
-    f.render_widget(
-        Paragraph::new(Span::styled(
-            format!(
-                " {} sessions | {} active ",
-                app.total_sessions(),
-                app.active_count()
-            ),
-            Style::default().fg(Color::Gray),
-        ))
-        .alignment(Alignment::Right),
-        layout[1],
-    );
 }
 
 fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
@@ -110,7 +79,11 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
 
     let block = Block::default()
         .title(" Sessions ")
-        .title_style(Style::default().fg(ACCENT_COLOR).add_modifier(Modifier::BOLD))
+        .title_style(
+            Style::default()
+                .fg(ACCENT_COLOR)
+                .add_modifier(Modifier::BOLD),
+        )
         .borders(Borders::ALL)
         .border_style(border_style);
 
@@ -167,7 +140,11 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
 
                 let name = session.display_name();
                 let time_str = session.updated_at.format("%m/%d %H:%M").to_string();
-                let prefix = if is_cursor && is_focused { "  ❯ " } else { "    " };
+                let prefix = if is_cursor && is_focused {
+                    "  ❯ "
+                } else {
+                    "    "
+                };
 
                 let name_style = if is_cursor && is_focused {
                     Style::default()
@@ -175,7 +152,9 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
                         .bg(SELECTED_BG)
                         .add_modifier(Modifier::BOLD)
                 } else if is_selected {
-                    Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(Color::White)
                 };
@@ -197,18 +176,21 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
             }
             FlatItem::LoadMore { hidden_count, .. } => {
                 let is_cursor = app.cursor == flat_idx;
-                let prefix = if is_cursor && is_focused { "  ❯ " } else { "    " };
+                let prefix = if is_cursor && is_focused {
+                    "  ❯ "
+                } else {
+                    "    "
+                };
                 let style = if is_cursor && is_focused {
-                    Style::default().fg(LOAD_MORE_COLOR).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(LOAD_MORE_COLOR)
+                        .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(LOAD_MORE_COLOR)
                 };
                 items.push(ListItem::new(Line::from(vec![
                     Span::raw(prefix),
-                    Span::styled(
-                        format!("… {hidden_count} more  [Enter to expand]"),
-                        style,
-                    ),
+                    Span::styled(format!("… {hidden_count} more  [Enter to expand]"), style),
                 ])));
                 if is_cursor {
                     list_state.select(Some(list_idx));
@@ -228,7 +210,7 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
     // ── Embedded terminal mode ────────────────────────────────────────────────
     if app.mode == Mode::Terminal {
         if let Some(ref terminal) = app.embedded_terminal {
-            draw_embedded_terminal(f, terminal, area);
+            draw_embedded_terminal(f, terminal, area, false);
             return;
         }
     }
@@ -270,7 +252,11 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
     let session = &app.sessions[idx];
     let block = Block::default()
         .title(format!(" {} ", session.display_name()))
-        .title_style(Style::default().fg(ACCENT_COLOR).add_modifier(Modifier::BOLD))
+        .title_style(
+            Style::default()
+                .fg(ACCENT_COLOR)
+                .add_modifier(Modifier::BOLD),
+        )
         .borders(Borders::ALL)
         .border_style(border_style);
     let inner = block.inner(area);
@@ -292,7 +278,9 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
             Span::styled("  Status:    ", Style::default().fg(Color::Gray)),
             Span::styled(
                 format!("{status_sym} {}", session.status.label()),
-                Style::default().fg(status_color).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(status_color)
+                    .add_modifier(Modifier::BOLD),
             ),
         ]),
         Line::from(vec![
@@ -437,10 +425,22 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
 
 // ── Embedded terminal renderer ────────────────────────────────────────────────
 
-fn draw_embedded_terminal(f: &mut Frame, term: &crate::terminal::EmbeddedTerminal, area: Rect) {
+fn draw_embedded_terminal(
+    f: &mut Frame,
+    term: &crate::terminal::EmbeddedTerminal,
+    area: Rect,
+    fullscreen: bool,
+) {
     let block = Block::default()
-        .title(format!(" {} ", &term.session_id[..term.session_id.len().min(20)]))
-        .title_style(Style::default().fg(ACTIVE_COLOR).add_modifier(Modifier::BOLD))
+        .title(format!(
+            " {} ",
+            &term.session_id[..term.session_id.len().min(20)]
+        ))
+        .title_style(
+            Style::default()
+                .fg(ACTIVE_COLOR)
+                .add_modifier(Modifier::BOLD),
+        )
         .borders(Borders::ALL)
         .border_style(Style::default().fg(ACTIVE_COLOR));
 
@@ -464,7 +464,11 @@ fn draw_embedded_terminal(f: &mut Frame, term: &crate::terminal::EmbeddedTermina
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                "   Ctrl+W: detach  ",
+                if fullscreen {
+                    "   Ctrl+F: split view   Ctrl+W: detach  "
+                } else {
+                    "   Ctrl+F: fullscreen   Ctrl+W: detach  "
+                },
                 Style::default().fg(Color::DarkGray),
             ),
         ])),
@@ -476,11 +480,7 @@ fn draw_embedded_terminal(f: &mut Frame, term: &crate::terminal::EmbeddedTermina
     render_vt100_screen(f, term, vt100_area);
 }
 
-fn render_vt100_screen(
-    f: &mut Frame,
-    term: &crate::terminal::EmbeddedTerminal,
-    area: Rect,
-) {
+fn render_vt100_screen(f: &mut Frame, term: &crate::terminal::EmbeddedTerminal, area: Rect) {
     let parser = term.parser.lock().unwrap();
     let screen = parser.screen();
 
@@ -530,10 +530,7 @@ fn render_vt100_screen(
 
     // Position the cursor.
     let (cursor_row, cursor_col) = screen.cursor_position();
-    if !screen.hide_cursor()
-        && cursor_col < area.width
-        && cursor_row < area.height
-    {
+    if !screen.hide_cursor() && cursor_col < area.width && cursor_row < area.height {
         f.set_cursor_position(Position {
             x: area.x + cursor_col,
             y: area.y + cursor_row,
@@ -577,7 +574,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(Color::Yellow),
         ),
         Mode::Terminal => (
-            " [Ctrl+W] Detach from session  (all other keys forwarded to Copilot) ",
+            " [Ctrl+F] Fullscreen  [Ctrl+W] Detach  (all other keys forwarded to Copilot) ",
             Style::default().fg(ACTIVE_COLOR),
         ),
         Mode::Normal => {
@@ -611,7 +608,11 @@ fn draw_input_popup(f: &mut Frame, title: &str, input: &str, area: Rect) {
     f.render_widget(Clear, popup);
     let block = Block::default()
         .title(title)
-        .title_style(Style::default().fg(ACCENT_COLOR).add_modifier(Modifier::BOLD))
+        .title_style(
+            Style::default()
+                .fg(ACCENT_COLOR)
+                .add_modifier(Modifier::BOLD),
+        )
         .borders(Borders::ALL)
         .border_style(Style::default().fg(ACCENT_COLOR));
     let inner = block.inner(popup);

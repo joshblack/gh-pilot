@@ -1,4 +1,4 @@
-use crate::session::{group_sessions, load_sessions, CopilotSession, SessionStatus};
+use crate::session::{group_sessions, load_sessions, CopilotSession};
 use crate::terminal::EmbeddedTerminal;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -29,9 +29,14 @@ pub enum Mode {
 pub enum PendingAction {
     None,
     /// Resume an existing session embedded in the right panel.
-    OpenEmbedded { id: String, cwd: PathBuf },
+    OpenEmbedded {
+        id: String,
+        cwd: PathBuf,
+    },
     /// Start a new copilot session in `dir`, embedded in the right panel.
-    LaunchNew { dir: PathBuf },
+    LaunchNew {
+        dir: PathBuf,
+    },
 }
 
 // ── FlatItem ─────────────────────────────────────────────────────────────────
@@ -44,7 +49,10 @@ pub enum FlatItem {
     /// A session entry: index into `App::sessions`.
     SessionEntry(usize),
     /// A "… N more" item at the end of a collapsed group.
-    LoadMore { group_key: String, hidden_count: usize },
+    LoadMore {
+        group_key: String,
+        hidden_count: usize,
+    },
 }
 
 // ── App ──────────────────────────────────────────────────────────────────────
@@ -72,6 +80,8 @@ pub struct App {
     pub expanded_groups: HashSet<String>,
     /// A live copilot session embedded in the right panel, if any.
     pub embedded_terminal: Option<EmbeddedTerminal>,
+    /// Whether the embedded terminal is taking the full TUI area.
+    pub terminal_fullscreen: bool,
 }
 
 impl App {
@@ -109,6 +119,7 @@ impl App {
             pending_action: PendingAction::None,
             expanded_groups,
             embedded_terminal: None,
+            terminal_fullscreen: false,
         }
     }
 
@@ -147,7 +158,8 @@ impl App {
             return;
         }
         let mut c = self.cursor + 1;
-        while c < self.flat_list.len() - 1 && matches!(self.flat_list[c], FlatItem::GroupHeader(_)) {
+        while c < self.flat_list.len() - 1 && matches!(self.flat_list[c], FlatItem::GroupHeader(_))
+        {
             c += 1;
         }
         if matches!(self.flat_list[c], FlatItem::GroupHeader(_)) {
@@ -253,6 +265,11 @@ impl App {
     pub fn detach_terminal(&mut self) {
         self.embedded_terminal = None;
         self.mode = Mode::Normal;
+        self.terminal_fullscreen = false;
+    }
+
+    pub fn toggle_terminal_fullscreen(&mut self) {
+        self.terminal_fullscreen = !self.terminal_fullscreen;
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -264,26 +281,17 @@ impl App {
         }
     }
 
-    pub fn total_sessions(&self) -> usize {
-        self.sessions.len()
-    }
-
-    pub fn active_count(&self) -> usize {
-        self.sessions
-            .iter()
-            .filter(|s| s.status == SessionStatus::Active)
-            .count()
-    }
-
     fn rebuild_flat_list_keep_cursor(&mut self) {
         // Try to remember which session the cursor is on.
-        let cursor_id = self.session_at_cursor().map(|i| self.sessions[i].id.clone());
+        let cursor_id = self
+            .session_at_cursor()
+            .map(|i| self.sessions[i].id.clone());
         self.flat_list = build_flat_list(&self.sessions, &self.expanded_groups);
         // Restore cursor to the same session if possible.
         if let Some(id) = cursor_id {
-            if let Some(pos) = self.flat_list.iter().position(|item| {
-                matches!(item, FlatItem::SessionEntry(i) if self.sessions[*i].id == id)
-            }) {
+            if let Some(pos) = self.flat_list.iter().position(
+                |item| matches!(item, FlatItem::SessionEntry(i) if self.sessions[*i].id == id),
+            ) {
                 self.cursor = pos;
             }
         }
@@ -303,7 +311,11 @@ fn build_flat_list(sessions: &[CopilotSession], expanded: &HashSet<String>) -> V
     for (key, indices) in groups {
         let is_expanded = expanded.contains(&key);
         let total = indices.len();
-        let visible = if is_expanded { total } else { total.min(MAX_SESSIONS_PER_GROUP) };
+        let visible = if is_expanded {
+            total
+        } else {
+            total.min(MAX_SESSIONS_PER_GROUP)
+        };
 
         flat.push(FlatItem::GroupHeader(key.clone()));
         for &idx in &indices[..visible] {
@@ -319,5 +331,3 @@ fn build_flat_list(sessions: &[CopilotSession], expanded: &HashSet<String>) -> V
 
     flat
 }
-
-
