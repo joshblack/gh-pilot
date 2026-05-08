@@ -24,7 +24,8 @@ const AGENT_MSG_COLOR: Color = Color::White;
 const MARKDOWN_HEADING_COLOR: Color = Color::Magenta;
 const MARKDOWN_MARKER_COLOR: Color = Color::Yellow;
 const MARKDOWN_CODE_COLOR: Color = Color::Green;
-const MARKDOWN_QUOTE_COLOR: Color = Color::Gray;
+const MARKDOWN_BLOCKQUOTE_COLOR: Color = Color::Gray;
+const MAX_LIST_MARKER_DIGITS: usize = 9;
 /// Maximum lines shown per assistant response before truncating.
 const MAX_RESPONSE_LINES: usize = 20;
 
@@ -512,7 +513,7 @@ fn markdown_line(
                 .fg(MARKDOWN_MARKER_COLOR)
                 .add_modifier(Modifier::BOLD),
         ));
-        append_inline_markdown(spans, rest, MARKDOWN_QUOTE_COLOR)
+        append_inline_markdown(spans, rest, MARKDOWN_BLOCKQUOTE_COLOR)
     } else if let Some((marker, rest)) = split_list_marker(trimmed) {
         spans.push(Span::styled(leading_ws.to_string(), base_style));
         spans.push(Span::styled(
@@ -570,9 +571,9 @@ fn is_heading(trimmed: &str) -> bool {
     let hashes = trimmed.chars().take_while(|ch| *ch == '#').count();
     (1..=6).contains(&hashes)
         && trimmed
-            .chars()
-            .nth(hashes)
-            .is_some_and(|ch| ch.is_whitespace())
+            .as_bytes()
+            .get(hashes)
+            .is_some_and(|byte| byte.is_ascii_whitespace())
 }
 
 fn split_list_marker(trimmed: &str) -> Option<(&str, &str)> {
@@ -585,7 +586,7 @@ fn split_list_marker(trimmed: &str) -> Option<(&str, &str)> {
 
     let marker_end = trimmed.find('.')?;
     if marker_end == 0
-        || marker_end > 9
+        || marker_end > MAX_LIST_MARKER_DIGITS
         || !trimmed[..marker_end].chars().all(|ch| ch.is_ascii_digit())
         || !trimmed[marker_end + 1..].starts_with(char::is_whitespace)
     {
