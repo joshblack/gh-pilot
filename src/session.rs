@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -40,6 +40,8 @@ pub struct CopilotSession {
     pub branch: Option<String>,
     /// Auto-generated or user-provided summary / name
     pub summary: Option<String>,
+    /// Last assistant response, used as a one-line session description
+    pub last_agent_message: Option<String>,
     /// Whether the user explicitly named this session
     #[allow(dead_code)]
     pub user_named: bool,
@@ -111,6 +113,7 @@ pub fn session_db_path(copilot_dir: &Path) -> PathBuf {
 pub fn load_sessions(copilot_dir: &Path) -> Vec<CopilotSession> {
     let state_dir = session_state_dir(copilot_dir);
     let db_path = session_db_path(copilot_dir);
+    let oldest_active = Utc::now() - Duration::days(7);
 
     let mut sessions = Vec::new();
 
@@ -130,8 +133,12 @@ pub fn load_sessions(copilot_dir: &Path) -> Vec<CopilotSession> {
         }
         if let Ok(content) = fs::read_to_string(&workspace) {
             if let Some(mut session) = parse_workspace_yaml(&content) {
+                if session.updated_at < oldest_active {
+                    continue;
+                }
                 // Try to enrich with summary from SQLite
                 session.summary = load_summary_from_db(&db_path, &session.id).or(session.summary);
+                session.last_agent_message = load_last_agent_message_from_db(&db_path, &session.id);
                 session.status = detect_session_status(&db_path, &session.id);
                 sessions.push(session);
             }
@@ -254,8 +261,11 @@ fn parse_workspace_yaml(content: &str) -> Option<CopilotSession> {
         .map(|d| d.with_timezone(&Utc))
         .unwrap_or(created_at);
 
-    // summary_count can guide us but the actual summary comes from the DB
-    let summary = None;
+    // summary_count can guide us but the actual summary usually comes from the DB
+    let summary = map
+        .get("title")
+        .or_else(|| map.get("summary"))
+        .map(|s| s.to_string());
 
     Some(CopilotSession {
         id,
@@ -264,6 +274,7 @@ fn parse_workspace_yaml(content: &str) -> Option<CopilotSession> {
         repository,
         branch,
         summary,
+        last_agent_message: None,
         user_named,
         created_at,
         updated_at,
@@ -280,8 +291,22 @@ fn load_summary_from_db(db_path: &Path, session_id: &str) -> Option<String> {
         |row| row.get::<_, Option<String>>(0),
     )
     .ok()
+        .flatten()
+        .filter(|s| !s.is_empty())
+}
+
+fn load_last_agent_message_from_db(db_path: &Path, session_id: &str) -> Option<String> {
+    let conn = rusqlite::Connection::open(db_path).ok()?;
+    conn.query_row(
+        "SELECT assistant_response FROM turns \
+         WHERE session_id = ? AND assistant_response IS NOT NULL AND assistant_response != '' \
+         ORDER BY turn_index DESC LIMIT 1",
+        [session_id],
+        |row| row.get::<_, Option<String>>(0),
+    )
+    .ok()
     .flatten()
-    .filter(|s| !s.is_empty())
+    .filter(|s| !s.trim().is_empty())
 }
 
 fn detect_session_status(db_path: &Path, session_id: &str) -> SessionStatus {

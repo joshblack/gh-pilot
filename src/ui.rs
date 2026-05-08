@@ -1,5 +1,6 @@
 use crate::app::{App, FlatItem, Mode, Panel};
-use crate::session::{load_turns, session_db_path, SessionStatus};
+use crate::session::{load_turns, session_db_path, CopilotSession, SessionStatus};
+use chrono::Utc;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Position, Rect},
     style::{Color, Modifier, Style},
@@ -125,14 +126,12 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
             FlatItem::GroupHeader(path) => {
                 let label = short_path(path);
                 let is_cursor = app.cursor == flat_idx;
-                let is_collapsed = app.collapsed_groups.contains(path);
                 let is_focused_group = app.focused_group.as_deref() == Some(path.as_str());
                 let prefix = if is_cursor && is_focused {
                     "❯ "
                 } else {
-                    "  "
+                    ""
                 };
-                let marker = if is_collapsed { "▸ " } else { "▾ " };
                 let focus_suffix = if is_focused_group { "  focused" } else { "" };
                 let style = if is_cursor && is_focused {
                     Style::default()
@@ -146,7 +145,6 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
                 };
                 items.push(ListItem::new(Line::from(vec![
                     Span::raw(prefix),
-                    Span::styled(marker, style),
                     Span::styled(label, style),
                     Span::styled(focus_suffix, Style::default().fg(Color::DarkGray)),
                 ])));
@@ -159,16 +157,6 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
                 let session = &app.sessions[*idx];
                 let is_cursor = app.cursor == flat_idx;
                 let is_selected = app.selected_session == Some(*idx);
-
-                let (status_color, status_sym) = status_display(&session.status);
-
-                let name = session.display_name();
-                let time_str = session.updated_at.format("%m/%d %H:%M").to_string();
-                let prefix = if is_cursor && is_focused {
-                    "  ❯ "
-                } else {
-                    "    "
-                };
 
                 let name_style = if is_cursor && is_focused {
                     Style::default()
@@ -183,15 +171,10 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
                     Style::default().fg(Color::White)
                 };
 
-                items.push(ListItem::new(Line::from(vec![
-                    Span::raw(prefix),
-                    Span::styled(status_sym, Style::default().fg(status_color)),
-                    Span::raw(" "),
-                    Span::styled(name, name_style),
-                    Span::styled(
-                        format!("  {time_str}"),
-                        Style::default().fg(Color::DarkGray),
-                    ),
+                let prefix = if is_cursor && is_focused { "❯ " } else { "  " };
+                items.push(ListItem::new(Text::from(vec![
+                    session_title_line(session, inner.width as usize, prefix, name_style),
+                    session_description_line(session, inner.width as usize, prefix.len()),
                 ])));
 
                 if is_cursor {
@@ -202,9 +185,9 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
             FlatItem::LoadMore { hidden_count, .. } => {
                 let is_cursor = app.cursor == flat_idx;
                 let prefix = if is_cursor && is_focused {
-                    "  ❯ "
+                    "❯ "
                 } else {
-                    "    "
+                    "  "
                 };
                 let style = if is_cursor && is_focused {
                     Style::default()
@@ -227,6 +210,69 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
 
     let list = List::new(items).highlight_style(Style::default().bg(SELECTED_BG));
     f.render_stateful_widget(list, inner, &mut list_state);
+}
+
+fn session_title_line(
+    session: &CopilotSession,
+    width: usize,
+    prefix: &str,
+    name_style: Style,
+) -> Line<'static> {
+    let time = relative_minutes(session);
+    let fixed_width = prefix.chars().count() + time.chars().count() + 1;
+    let title_width = width.saturating_sub(fixed_width).max(1);
+    let title = truncate_ellipsis(&single_line(&session.display_name()), title_width);
+    let used_width = prefix.chars().count() + title.chars().count() + time.chars().count();
+    let spacer = " ".repeat(width.saturating_sub(used_width).max(1));
+
+    Line::from(vec![
+        Span::raw(prefix.to_string()),
+        Span::styled(title, name_style),
+        Span::raw(spacer),
+        Span::styled(time, Style::default().fg(Color::DarkGray)),
+    ])
+}
+
+fn session_description_line(
+    session: &CopilotSession,
+    width: usize,
+    title_prefix_width: usize,
+) -> Line<'static> {
+    let prefix = " ".repeat(title_prefix_width);
+    let message = session
+        .last_agent_message
+        .as_deref()
+        .map(single_line)
+        .filter(|message| !message.is_empty())
+        .unwrap_or_else(|| "No agent response yet.".to_string());
+    let description = truncate_ellipsis(
+        &message,
+        width.saturating_sub(title_prefix_width).max(1),
+    );
+
+    Line::from(vec![
+        Span::raw(prefix),
+        Span::styled(description, Style::default().fg(Color::Gray)),
+    ])
+}
+
+fn relative_minutes(session: &CopilotSession) -> String {
+    let minutes = (Utc::now() - session.updated_at).num_minutes().max(0);
+    format!("{minutes}m")
+}
+
+fn single_line(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn truncate_ellipsis(value: &str, max_width: usize) -> String {
+    let mut chars = value.chars();
+    let mut truncated: String = chars.by_ref().take(max_width).collect();
+    if chars.next().is_some() && max_width > 0 {
+        truncated.pop();
+        truncated.push('…');
+    }
+    truncated
 }
 
 // ── Detail panel (right) ──────────────────────────────────────────────────────
@@ -275,27 +321,28 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
     };
 
     let session = &app.sessions[idx];
-    let block = Block::default()
-        .title(format!(" {} ", session.display_name()))
-        .title_style(
-            Style::default()
-                .fg(ACCENT_COLOR)
-                .add_modifier(Modifier::BOLD),
-        )
-        .borders(Borders::ALL)
-        .border_style(border_style);
+    let block = Block::default().borders(Borders::ALL).border_style(border_style);
     let inner = block.inner(area);
     f.render_widget(block, area);
 
     let layout = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(7), Constraint::Min(1)])
+        .constraints([Constraint::Length(4), Constraint::Min(1)])
         .split(inner);
 
     // Info card
     let (status_color, status_sym) = status_display(&session.status);
 
-    let mut info_lines = vec![
+    let info_lines = vec![
+        Line::from(vec![
+            Span::styled("  Title:     ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                session.display_name(),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
         Line::from(vec![
             Span::styled("  Status:    ", Style::default().fg(Color::Gray)),
             Span::styled(
@@ -305,41 +352,7 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
                     .add_modifier(Modifier::BOLD),
             ),
         ]),
-        Line::from(vec![
-            Span::styled("  Directory: ", Style::default().fg(Color::Gray)),
-            Span::styled(
-                short_path(&session.cwd.to_string_lossy()),
-                Style::default().fg(Color::White),
-            ),
-        ]),
     ];
-
-    if let Some(ref repo) = session.repository {
-        info_lines.push(Line::from(vec![
-            Span::styled("  Repo:      ", Style::default().fg(Color::Gray)),
-            Span::styled(repo.clone(), Style::default().fg(Color::White)),
-        ]));
-    }
-    if let Some(ref branch) = session.branch {
-        info_lines.push(Line::from(vec![
-            Span::styled("  Branch:    ", Style::default().fg(Color::Gray)),
-            Span::styled(branch.clone(), Style::default().fg(Color::White)),
-        ]));
-    }
-    info_lines.push(Line::from(vec![
-        Span::styled("  Updated:   ", Style::default().fg(Color::Gray)),
-        Span::styled(
-            session.updated_at.format("%Y-%m-%d %H:%M UTC").to_string(),
-            Style::default().fg(Color::White),
-        ),
-    ]));
-    info_lines.push(Line::from(vec![
-        Span::styled("  ID:        ", Style::default().fg(Color::Gray)),
-        Span::styled(
-            format!("{}…", &session.id[..8]),
-            Style::default().fg(Color::DarkGray),
-        ),
-    ]));
 
     let info_card = Paragraph::new(info_lines)
         .block(
