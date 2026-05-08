@@ -13,11 +13,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ratatui::{
-    backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout, Position, Rect, Size},
-    Terminal,
-};
+use ratatui::{backend::CrosstermBackend, Terminal};
 use session::copilot_binary;
 use std::{
     io,
@@ -203,7 +199,7 @@ where
                         status_since = Some(Instant::now());
                     }
                 }
-                Event::Mouse(mouse) => handle_mouse(app, mouse, terminal.size()?),
+                Event::Mouse(mouse) => handle_mouse(app, mouse),
                 _ => {}
             }
         }
@@ -229,26 +225,19 @@ where
 }
 
 /// Calculate the rows/cols available for the embedded PTY given the terminal size.
-fn embedded_terminal_size(term_size: Size, fullscreen: bool) -> (u16, u16) {
-    let area = embedded_terminal_area(term_size, fullscreen);
-    (area.height.max(1), area.width.max(1))
-}
-
-fn embedded_terminal_area(term_size: Size, fullscreen: bool) -> Rect {
-    let area = Rect::new(0, 0, term_size.width, term_size.height);
+fn embedded_terminal_size(term_size: ratatui::layout::Size, fullscreen: bool) -> (u16, u16) {
     if fullscreen {
-        return area;
+        return (term_size.height.max(1), term_size.width.max(1));
     }
 
-    let outer = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(0), Constraint::Length(1)])
-        .split(area);
-    let cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(35), Constraint::Percentage(65)])
-        .split(outer[0]);
-    BlockArea::new(cols[1]).inner()
+    // Body + footer(1), with the terminal in the right 65% detail panel.
+    let height = term_size.height.saturating_sub(1);
+    let width = term_size.width * 65 / 100;
+
+    // Subtract borders (2 each side).
+    let rows = height.saturating_sub(2).max(1);
+    let cols = width.saturating_sub(2).max(1); // left + right borders
+    (rows, cols)
 }
 
 fn resize_embedded_terminal(app: &mut App, term_size: ratatui::layout::Size) {
@@ -280,8 +269,8 @@ fn handle_normal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
             KeyCode::Char('q') | KeyCode::Char('Q') => app.should_quit = true,
             KeyCode::Char('j') | KeyCode::Down => app.move_down(),
             KeyCode::Char('k') | KeyCode::Up => app.move_up(),
-            KeyCode::PageDown => app.move_page_down(),
-            KeyCode::PageUp => app.move_page_up(),
+            KeyCode::PageDown => app.scroll_detail_page_down(),
+            KeyCode::PageUp => app.scroll_detail_page_up(),
             KeyCode::Enter | KeyCode::Char(' ') => app.select_current(),
             KeyCode::Char('c') => app.toggle_current_group_collapsed(),
             KeyCode::Char('f') => app.toggle_directory_focus(),
@@ -307,48 +296,20 @@ fn handle_normal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
     }
 }
 
-fn handle_mouse(app: &mut App, mouse: MouseEvent, term_size: Size) {
+fn handle_mouse(app: &mut App, mouse: MouseEvent) {
     match app.mode {
-        Mode::Normal => match app.active_panel {
-            Panel::Sessions => match mouse.kind {
-                MouseEventKind::ScrollUp => app.move_up(),
-                MouseEventKind::ScrollDown => app.move_down(),
-                _ => {}
-            },
-            Panel::Detail => match mouse.kind {
-                MouseEventKind::ScrollUp => app.scroll_detail_up(),
-                MouseEventKind::ScrollDown => app.scroll_detail_down(),
-                _ => {}
-            },
+        Mode::Normal => match mouse.kind {
+            MouseEventKind::ScrollUp => app.scroll_detail_up(),
+            MouseEventKind::ScrollDown => app.scroll_detail_down(),
+            _ => {}
         },
-        Mode::Terminal => {
-            let area = embedded_terminal_area(term_size, app.terminal_fullscreen);
-            if area.contains(Position::new(mouse.column, mouse.row)) {
-                let bytes = mouse_to_bytes(mouse, area.x, area.y);
-                if let (false, Some(term)) = (bytes.is_empty(), app.embedded_terminal.as_ref()) {
-                    term.write_input(&bytes);
-                }
+        Mode::Terminal if app.terminal_fullscreen => {
+            let bytes = mouse_to_bytes(mouse);
+            if let (false, Some(term)) = (bytes.is_empty(), app.embedded_terminal.as_ref()) {
+                term.write_input(&bytes);
             }
         }
-        Mode::NewSessionDir => {}
-    }
-}
-
-/// Calculates the drawable area inside a bordered block by removing its border cells.
-struct BlockArea(Rect);
-
-impl BlockArea {
-    fn new(area: Rect) -> Self {
-        Self(area)
-    }
-
-    fn inner(self) -> Rect {
-        Rect::new(
-            self.0.x.saturating_add(1),
-            self.0.y.saturating_add(1),
-            self.0.width.saturating_sub(2),
-            self.0.height.saturating_sub(2),
-        )
+        _ => {}
     }
 }
 

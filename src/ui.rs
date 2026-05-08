@@ -1,5 +1,5 @@
-use crate::app::{App, ConversationLine, FlatItem, Mode, Panel};
-use crate::session::SessionStatus;
+use crate::app::{App, FlatItem, Mode, Panel};
+use crate::session::{load_turns, session_db_path, SessionStatus};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Position, Rect},
     style::{Color, Modifier, Style},
@@ -120,9 +120,7 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
     let mut list_state = ListState::default();
     let mut list_idx = 0usize;
 
-    let (start, end) = visible_flat_range(app.cursor, app.flat_list.len(), inner.height as usize);
-
-    for (flat_idx, item) in app.flat_list.iter().enumerate().take(end).skip(start) {
+    for (flat_idx, item) in app.flat_list.iter().enumerate() {
         match item {
             FlatItem::GroupHeader(path) => {
                 let label = short_path(path);
@@ -167,9 +165,9 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
                 let name = session.display_name();
                 let time_str = session.updated_at.format("%m/%d %H:%M").to_string();
                 let prefix = if is_cursor && is_focused {
-                    "❯ "
+                    "  ❯ "
                 } else {
-                    "  "
+                    "    "
                 };
 
                 let name_style = if is_cursor && is_focused {
@@ -204,9 +202,9 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
             FlatItem::LoadMore { hidden_count, .. } => {
                 let is_cursor = app.cursor == flat_idx;
                 let prefix = if is_cursor && is_focused {
-                    "❯ "
+                    "  ❯ "
                 } else {
-                    "  "
+                    "    "
                 };
                 let style = if is_cursor && is_focused {
                     Style::default()
@@ -229,20 +227,6 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
 
     let list = List::new(items).highlight_style(Style::default().bg(SELECTED_BG));
     f.render_stateful_widget(list, inner, &mut list_state);
-}
-
-/// Calculate the half-open `[start, end)` range of session-list rows to render,
-/// keeping `cursor` visible and centered when possible.
-fn visible_flat_range(cursor: usize, len: usize, height: usize) -> (usize, usize) {
-    if len == 0 || height == 0 {
-        return (0, 0);
-    }
-
-    let cursor = cursor.min(len - 1);
-    let max_start = len.saturating_sub(height);
-    let start = cursor.saturating_sub(height / 2).min(max_start);
-    let end = (start + height).min(len);
-    (start, end)
 }
 
 // ── Detail panel (right) ──────────────────────────────────────────────────────
@@ -272,12 +256,12 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
         f.render_widget(block, area);
         let msg = Paragraph::new(Text::from(vec![
             Line::from(Span::styled(
-                "Select a session",
+                "Select a session with j/k + Enter",
                 Style::default().fg(Color::DarkGray),
             )),
             Line::from(Span::raw("")),
             Line::from(Span::styled(
-                "Open it to show a live terminal session",
+                "Press [o] to open a live terminal session",
                 Style::default().fg(Color::DarkGray),
             )),
         ]))
@@ -366,32 +350,89 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
         .wrap(Wrap { trim: false });
     f.render_widget(info_card, layout[0]);
 
+    // Conversation turns
+    let db_path = session_db_path(&app.copilot_dir);
+    let turns = load_turns(&db_path, &session.id);
+
+    let mut turn_lines: Vec<Line> = Vec::new();
+
+    if turns.is_empty() {
+        turn_lines.push(Line::from(Span::styled(
+            "  No conversation history yet.",
+            Style::default().fg(Color::DarkGray),
+        )));
+        turn_lines.push(Line::from(Span::raw("")));
+        turn_lines.push(Line::from(Span::styled(
+            "  Press [o] to open this session in Copilot.",
+            Style::default().fg(Color::DarkGray),
+        )));
+    } else {
+        for turn in &turns {
+            if let Some(ref msg) = turn.user_message {
+                turn_lines.push(Line::from(Span::styled(
+                    "  You",
+                    Style::default()
+                        .fg(USER_MSG_COLOR)
+                        .add_modifier(Modifier::BOLD),
+                )));
+                for line in msg.lines() {
+                    turn_lines.push(Line::from(Span::styled(
+                        format!("  {line}"),
+                        Style::default().fg(USER_MSG_COLOR),
+                    )));
+                }
+                turn_lines.push(Line::from(Span::raw("")));
+            }
+            if let Some(ref resp) = turn.assistant_response {
+                turn_lines.push(Line::from(Span::styled(
+                    "  Copilot",
+                    Style::default()
+                        .fg(AGENT_MSG_COLOR)
+                        .add_modifier(Modifier::BOLD),
+                )));
+                for line in resp.lines().take(MAX_RESPONSE_LINES) {
+                    turn_lines.push(Line::from(Span::styled(
+                        format!("  {line}"),
+                        Style::default().fg(AGENT_MSG_COLOR),
+                    )));
+                }
+                if resp.lines().count() > MAX_RESPONSE_LINES {
+                    turn_lines.push(Line::from(Span::styled(
+                        "  … (truncated)",
+                        Style::default().fg(Color::DarkGray),
+                    )));
+                }
+                turn_lines.push(Line::from(Span::raw("")));
+            }
+            turn_lines.push(Line::from(Span::styled(
+                format!("  ─── Turn {} ", turn.turn_index + 1),
+                Style::default().fg(Color::DarkGray),
+            )));
+            turn_lines.push(Line::from(Span::raw("")));
+        }
+    }
+
+    let total_lines = turn_lines.len();
     let visible_height = layout[1].height as usize;
-    let requested_scroll = app.detail_scroll;
-    let (total_lines, detail_scroll, turn_lines) = {
-        let conversation_lines = app
-            .selected_conversation_lines(MAX_RESPONSE_LINES)
-            .unwrap_or(&[]);
-        let total_lines = conversation_lines.len();
-        let max_scroll = total_lines.saturating_sub(visible_height);
-        let detail_scroll = requested_scroll.min(max_scroll);
-        let start = detail_scroll.min(total_lines);
-        let end = (start + visible_height).min(total_lines);
-        let turn_lines: Vec<Line> = conversation_lines[start..end]
-            .iter()
-            .map(conversation_line_to_ratatui)
-            .collect();
-        (total_lines, detail_scroll, turn_lines)
+    let max_scroll = total_lines.saturating_sub(visible_height);
+    if app.detail_scroll > max_scroll {
+        app.detail_scroll = max_scroll;
+    }
+
+    let log_title = if is_focused && !turns.is_empty() {
+        " Conversation [k/j scroll, o=open live] "
+    } else {
+        " Conversation "
     };
-    app.detail_scroll = detail_scroll;
 
     let turns_para = Paragraph::new(Text::from(turn_lines))
         .block(
             Block::default()
-                .title(" Conversation ")
+                .title(log_title)
                 .title_style(Style::default().fg(Color::Gray))
                 .borders(Borders::NONE),
         )
+        .scroll((app.detail_scroll as u16, 0))
         .wrap(Wrap { trim: false });
     f.render_widget(turns_para, layout[1]);
 
@@ -401,44 +442,6 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
             .begin_symbol(Some("↑"))
             .end_symbol(Some("↓"));
         f.render_stateful_widget(scrollbar, layout[1], &mut scroll_state);
-    }
-}
-
-fn conversation_line_to_ratatui(line: &ConversationLine) -> Line<'static> {
-    match line {
-        ConversationLine::Empty => Line::from(Span::raw("")),
-        ConversationLine::NoHistory => Line::from(Span::styled(
-            "  No conversation history yet.",
-            Style::default().fg(Color::DarkGray),
-        )),
-        ConversationLine::UserHeader => Line::from(Span::styled(
-            "  You",
-            Style::default()
-                .fg(USER_MSG_COLOR)
-                .add_modifier(Modifier::BOLD),
-        )),
-        ConversationLine::UserText(text) => Line::from(Span::styled(
-            format!("  {text}"),
-            Style::default().fg(USER_MSG_COLOR),
-        )),
-        ConversationLine::AssistantHeader => Line::from(Span::styled(
-            "  Copilot",
-            Style::default()
-                .fg(AGENT_MSG_COLOR)
-                .add_modifier(Modifier::BOLD),
-        )),
-        ConversationLine::AssistantText(text) => Line::from(Span::styled(
-            format!("  {text}"),
-            Style::default().fg(AGENT_MSG_COLOR),
-        )),
-        ConversationLine::Truncated => Line::from(Span::styled(
-            "  … (truncated)",
-            Style::default().fg(Color::DarkGray),
-        )),
-        ConversationLine::Separator(turn) => Line::from(Span::styled(
-            format!("  ─── Turn {turn} "),
-            Style::default().fg(Color::DarkGray),
-        )),
     }
 }
 
@@ -564,7 +567,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         Mode::Normal => {
             let t = match app.active_panel {
                 Panel::Sessions => {
-                    "Navigate: j/k  Page list: PageUp/PageDown  View/Expand: Enter  Focus dir: f  Collapse dir: c  Open: o  New: n  Reload: r  Quit: q"
+                    "Navigate: j/k  Preview scroll: PageUp/PageDown  View/Expand: Enter  Focus dir: f  Collapse dir: c  Open: o  New: n  Reload: r  Quit: q"
                 }
                 Panel::Detail => {
                     "Scroll: j/k  Back: Esc/h  Focus dir: f  Open: o  New: n  Reload: r  Quit: q"
@@ -645,29 +648,4 @@ fn short_path(path: &str) -> String {
         }
     }
     path.to_string()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::visible_flat_range;
-
-    #[test]
-    fn visible_flat_range_shows_all_items_when_they_fit() {
-        assert_eq!(visible_flat_range(2, 5, 10), (0, 5));
-    }
-
-    #[test]
-    fn visible_flat_range_centers_cursor_when_possible() {
-        assert_eq!(visible_flat_range(50, 100, 10), (45, 55));
-    }
-
-    #[test]
-    fn visible_flat_range_keeps_cursor_visible_near_end() {
-        assert_eq!(visible_flat_range(99, 100, 10), (90, 100));
-    }
-
-    #[test]
-    fn visible_flat_range_clamps_cursor_past_end() {
-        assert_eq!(visible_flat_range(200, 100, 10), (90, 100));
-    }
 }
