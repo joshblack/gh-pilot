@@ -20,3 +20,4 @@ rusqlite = { version = "0.32", features = [] }
 anyhow = "1"
 portable-pty = "0.9"
 vt100 = "0.16"
+shell-words = "1.1"

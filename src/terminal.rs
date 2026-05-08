@@ -9,6 +9,9 @@ use std::sync::{
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Keep generated tmux session names compact and safely below common terminal UI limits.
+const TMUX_SESSION_NAME_MAX_LEN: usize = 80;
+
 /// An embedded copilot terminal session running inside the right detail panel.
 pub struct EmbeddedTerminal {
     /// Shared vt100 screen state updated by the background reader thread.
@@ -151,22 +154,19 @@ fn tmux_session_name(session_id: &str) -> String {
         })
         .collect();
 
-    format!("ghmc_{}", sanitized.chars().take(80).collect::<String>())
+    format!(
+        "ghmc_{}",
+        sanitized
+            .chars()
+            .take(TMUX_SESSION_NAME_MAX_LEN)
+            .collect::<String>()
+    )
 }
 
 fn shell_command(copilot_bin: &Path, args: &[impl AsRef<OsStr>]) -> String {
-    std::iter::once(shell_quote(copilot_bin.as_os_str()))
-        .chain(args.iter().map(|arg| shell_quote(arg.as_ref())))
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn shell_quote(value: &OsStr) -> String {
-    let value = value.to_string_lossy();
-    if value.is_empty() {
-        return "''".to_string();
-    }
-    format!("'{}'", value.replace('\'', "'\\''"))
+    let words = std::iter::once(copilot_bin.as_os_str().to_string_lossy().to_string())
+        .chain(args.iter().map(|arg| arg.as_ref().to_string_lossy().to_string()));
+    shell_words::join(words)
 }
 
 // ── Key → byte sequence mapping ──────────────────────────────────────────────
