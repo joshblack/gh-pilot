@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 /// How many sessions to show per directory group before a "Load more" item.
 const MAX_SESSIONS_PER_GROUP: usize = 5;
+const DETAIL_PAGE_SCROLL_AMOUNT: usize = 5;
 
 // ── Enums ────────────────────────────────────────────────────────────────────
 
@@ -207,11 +208,11 @@ impl App {
     }
 
     pub fn scroll_detail_page_up(&mut self) {
-        self.detail_scroll = self.detail_scroll.saturating_sub(5);
+        self.detail_scroll = self.detail_scroll.saturating_sub(DETAIL_PAGE_SCROLL_AMOUNT);
     }
 
     pub fn scroll_detail_page_down(&mut self) {
-        self.detail_scroll += 5;
+        self.detail_scroll += DETAIL_PAGE_SCROLL_AMOUNT;
     }
 
     // ── Group expand / collapse ───────────────────────────────────────────────
@@ -365,18 +366,10 @@ impl App {
             ) {
                 self.cursor = pos;
             } else if let Some(group) = cursor_group.as_deref() {
-                self.cursor = self
-                    .flat_list
-                    .iter()
-                    .position(|item| matches!(item, FlatItem::GroupHeader(key) if key == group))
-                    .unwrap_or(self.cursor);
+                self.restore_cursor_to_group(group);
             }
         } else if let Some(group) = cursor_group.as_deref() {
-            self.cursor = self
-                .flat_list
-                .iter()
-                .position(|item| matches!(item, FlatItem::GroupHeader(key) if key == group))
-                .unwrap_or(self.cursor);
+            self.restore_cursor_to_group(group);
         }
         if self.cursor >= self.flat_list.len() {
             self.cursor = self.flat_list.len().saturating_sub(1);
@@ -389,6 +382,14 @@ impl App {
             self.selected_session = Some(idx);
             self.detail_scroll = 0;
         }
+    }
+
+    fn restore_cursor_to_group(&mut self, group: &str) {
+        self.cursor = self
+            .flat_list
+            .iter()
+            .position(|item| matches!(item, FlatItem::GroupHeader(key) if key == group))
+            .unwrap_or(self.cursor);
     }
 
     fn clear_missing_focused_group(&mut self) {
