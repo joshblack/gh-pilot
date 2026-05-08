@@ -305,14 +305,18 @@ impl App {
         let id = session.id.clone();
         let updated_at = session.updated_at;
         let db_path = session_db_path(&self.copilot_dir);
-        let entry = self
+        let is_stale = self
             .conversation_cache
-            .entry(id.clone())
-            .or_insert_with(|| (updated_at, load_turns(&db_path, &id)));
-        if entry.0 != updated_at {
-            *entry = (updated_at, load_turns(&db_path, &id));
+            .get(&id)
+            .map(|(cached_at, _)| *cached_at != updated_at)
+            .unwrap_or(true);
+        if is_stale {
+            self.conversation_cache
+                .insert(id.clone(), (updated_at, load_turns(&db_path, &id)));
         }
-        Some(&entry.1)
+        self.conversation_cache
+            .get(&id)
+            .map(|(_, turns)| turns.as_slice())
     }
 
     pub fn selected_conversation_lines(
@@ -333,10 +337,7 @@ impl App {
             .unwrap_or(true);
 
         if is_stale {
-            let lines = self
-                .selected_turns()
-                .map(|turns| conversation_lines_from_turns(turns, max_response_lines))
-                .unwrap_or_else(|| vec![ConversationLine::NoHistory]);
+            let lines = conversation_lines_from_turns(self.selected_turns()?, max_response_lines);
             self.conversation_line_cache
                 .insert(id.clone(), (updated_at, max_response_lines, lines));
         }
