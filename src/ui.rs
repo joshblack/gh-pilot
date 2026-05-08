@@ -188,9 +188,7 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
                         .bg(SELECTED_BG)
                         .add_modifier(Modifier::BOLD)
                 } else if is_selected {
-                    Style::default()
-                        .fg(TEXT_COLOR)
-                        .add_modifier(Modifier::BOLD)
+                    Style::default().fg(TEXT_COLOR).add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(TEXT_COLOR)
                 };
@@ -200,10 +198,7 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
                     Span::styled(status_sym, Style::default().fg(status_color)),
                     Span::raw(" "),
                     Span::styled(name, name_style),
-                    Span::styled(
-                        format!("  {time_str}"),
-                        Style::default().fg(MUTED_COLOR),
-                    ),
+                    Span::styled(format!("  {time_str}"), Style::default().fg(MUTED_COLOR)),
                 ])));
 
                 if is_cursor {
@@ -625,11 +620,11 @@ fn draw_input_popup(f: &mut Frame, title: &str, input: &str, area: Rect) {
     let inner = block.inner(popup);
     f.render_widget(block, popup);
     f.render_widget(
-            Paragraph::new(Span::styled(
-                format!("▶ {input}█"),
-                Style::default().fg(TEXT_COLOR),
-            ))
-            .style(Style::default().bg(SURFACE_COLOR)),
+        Paragraph::new(Span::styled(
+            format!("▶ {input}█"),
+            Style::default().fg(TEXT_COLOR),
+        ))
+        .style(Style::default().bg(SURFACE_COLOR)),
         inner,
     );
 }
