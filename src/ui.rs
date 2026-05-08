@@ -120,7 +120,9 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
     let mut list_state = ListState::default();
     let mut list_idx = 0usize;
 
-    for (flat_idx, item) in app.flat_list.iter().enumerate() {
+    let (start, end) = visible_flat_range(app.cursor, app.flat_list.len(), inner.height as usize);
+
+    for (flat_idx, item) in app.flat_list.iter().enumerate().take(end).skip(start) {
         match item {
             FlatItem::GroupHeader(path) => {
                 let label = short_path(path);
@@ -227,6 +229,18 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
 
     let list = List::new(items).highlight_style(Style::default().bg(SELECTED_BG));
     f.render_stateful_widget(list, inner, &mut list_state);
+}
+
+fn visible_flat_range(cursor: usize, len: usize, height: usize) -> (usize, usize) {
+    if len == 0 || height == 0 {
+        return (0, 0);
+    }
+
+    let cursor = cursor.min(len - 1);
+    let max_start = len.saturating_sub(height);
+    let start = cursor.saturating_sub(height / 2).min(max_start);
+    let end = (start + height).min(len);
+    (start, end)
 }
 
 // ── Detail panel (right) ──────────────────────────────────────────────────────
@@ -637,4 +651,24 @@ fn short_path(path: &str) -> String {
         }
     }
     path.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::visible_flat_range;
+
+    #[test]
+    fn visible_flat_range_shows_all_items_when_they_fit() {
+        assert_eq!(visible_flat_range(2, 5, 10), (0, 5));
+    }
+
+    #[test]
+    fn visible_flat_range_centers_cursor_when_possible() {
+        assert_eq!(visible_flat_range(50, 100, 10), (45, 55));
+    }
+
+    #[test]
+    fn visible_flat_range_keeps_cursor_visible_near_end() {
+        assert_eq!(visible_flat_range(99, 100, 10), (90, 100));
+    }
 }
