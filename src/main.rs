@@ -182,7 +182,7 @@ where
         }
 
         if last_status_poll.elapsed() >= app.status_poll_interval() {
-            app.reload();
+            app.refresh_statuses();
             last_status_poll = Instant::now();
         }
 

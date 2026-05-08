@@ -232,7 +232,7 @@ fn tmux_has_session(tmux_session: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn tmux_session_name(session_id: &str) -> String {
+pub(crate) fn tmux_session_name(session_id: &str) -> String {
     let suffix = if session_id == "new" {
         let millis = SystemTime::now()
             .duration_since(UNIX_EPOCH)

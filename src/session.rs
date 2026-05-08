@@ -1,6 +1,9 @@
+use crate::terminal::tmux_session_name;
 use chrono::{DateTime, Utc};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 // ── Status ──────────────────────────────────────────────────────────────────
 
@@ -111,6 +114,7 @@ pub fn session_db_path(copilot_dir: &Path) -> PathBuf {
 pub fn load_sessions(copilot_dir: &Path) -> Vec<CopilotSession> {
     let state_dir = session_state_dir(copilot_dir);
     let db_path = session_db_path(copilot_dir);
+    let active_tmux_sessions = active_tmux_session_names();
 
     let mut sessions = Vec::new();
 
@@ -132,7 +136,8 @@ pub fn load_sessions(copilot_dir: &Path) -> Vec<CopilotSession> {
             if let Some(mut session) = parse_workspace_yaml(&content) {
                 // Try to enrich with summary from SQLite
                 session.summary = load_summary_from_db(&db_path, &session.id).or(session.summary);
-                session.status = detect_session_status(&db_path, &session.id);
+                session.status =
+                    detect_session_status(&db_path, &session.id, &active_tmux_sessions);
                 sessions.push(session);
             }
         }
@@ -141,6 +146,16 @@ pub fn load_sessions(copilot_dir: &Path) -> Vec<CopilotSession> {
     // Sort newest-first by updated_at
     sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     sessions
+}
+
+/// Refresh status for already-loaded sessions using active gh-mission-control tmux sessions.
+pub fn refresh_session_statuses(copilot_dir: &Path, sessions: &mut [CopilotSession]) {
+    let db_path = session_db_path(copilot_dir);
+    let active_tmux_sessions = active_tmux_session_names();
+
+    for session in sessions {
+        session.status = detect_session_status(&db_path, &session.id, &active_tmux_sessions);
+    }
 }
 
 /// Load conversation turns for a session from the SQLite database.
@@ -284,8 +299,12 @@ fn load_summary_from_db(db_path: &Path, session_id: &str) -> Option<String> {
     .filter(|s| !s.is_empty())
 }
 
-fn detect_session_status(db_path: &Path, session_id: &str) -> SessionStatus {
-    if !is_session_active(session_id) {
+fn detect_session_status(
+    db_path: &Path,
+    session_id: &str,
+    active_tmux_sessions: &HashSet<String>,
+) -> SessionStatus {
+    if !active_tmux_sessions.contains(&tmux_session_name(session_id)) {
         return SessionStatus::Idle;
     }
 
@@ -335,30 +354,24 @@ fn response_indicates_error(response: &str) -> bool {
     .any(|needle| response.contains(needle))
 }
 
-/// Check if a copilot session is currently active by scanning running processes.
-/// On Linux this reads /proc/*/cmdline; returns false on other platforms.
-fn is_session_active(session_id: &str) -> bool {
-    #[cfg(target_os = "linux")]
-    {
-        let proc = match fs::read_dir("/proc") {
-            Ok(e) => e,
-            Err(_) => return false,
-        };
-        for entry in proc.flatten() {
-            let cmdline_path = entry.path().join("cmdline");
-            if let Ok(bytes) = fs::read(&cmdline_path) {
-                // cmdline args are NUL-separated
-                let cmdline = String::from_utf8_lossy(&bytes);
-                if cmdline.contains(session_id) {
-                    return true;
-                }
-            }
-        }
-        false
+fn active_tmux_session_names() -> HashSet<String> {
+    let output = Command::new("tmux")
+        .arg("list-sessions")
+        .arg("-F")
+        .arg("#{session_name}")
+        .stderr(Stdio::null())
+        .output();
+
+    let Ok(output) = output else {
+        return HashSet::new();
+    };
+    if !output.status.success() {
+        return HashSet::new();
     }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = session_id;
-        false
-    }
+
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|name| name.starts_with("ghmc_"))
+        .map(ToString::to_string)
+        .collect()
 }

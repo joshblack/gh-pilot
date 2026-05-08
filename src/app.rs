@@ -1,4 +1,6 @@
-use crate::session::{group_sessions, load_sessions, CopilotSession, SessionStatus};
+use crate::session::{
+    group_sessions, load_sessions, refresh_session_statuses, CopilotSession, SessionStatus,
+};
 use crate::terminal::EmbeddedTerminal;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -142,6 +144,10 @@ impl App {
 
     pub fn reload(&mut self) {
         self.replace_sessions(load_sessions(&self.copilot_dir));
+    }
+
+    pub fn refresh_statuses(&mut self) {
+        refresh_session_statuses(&self.copilot_dir, &mut self.sessions);
     }
 
     pub fn status_poll_interval(&self) -> std::time::Duration {
