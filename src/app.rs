@@ -49,11 +49,6 @@ pub enum FlatItem {
     GroupHeader(String),
     /// A session entry: index into `App::sessions`.
     SessionEntry(usize),
-    /// A "… N more" item at the end of a collapsed group.
-    LoadMore {
-        group_key: String,
-        hidden_count: usize,
-    },
 }
 
 // ── App ──────────────────────────────────────────────────────────────────────
@@ -79,7 +74,7 @@ pub struct App {
     pub pending_action: PendingAction,
     /// Session IDs present before launching a new Copilot session.
     pub new_session_reload_baseline: Option<HashSet<String>>,
-    /// Groups whose "Load more" item has been expanded.
+    /// Groups whose session list has been expanded past the initial limit.
     pub expanded_groups: HashSet<String>,
     /// Groups that are collapsed down to only their directory header.
     pub collapsed_groups: HashSet<String>,
@@ -230,9 +225,6 @@ impl App {
                 self.active_panel = Panel::Detail;
                 self.detail_scroll = 0;
             }
-            Some(FlatItem::LoadMore { group_key, .. }) => {
-                self.expand_group(&group_key);
-            }
             Some(FlatItem::GroupHeader(key)) => {
                 if self.collapsed_groups.contains(&key) {
                     self.collapsed_groups.remove(&key);
@@ -266,12 +258,6 @@ impl App {
     }
 
     // ── Group expand / collapse ───────────────────────────────────────────────
-
-    /// Expand a collapsed group (show all sessions past the initial 5).
-    pub fn expand_group(&mut self, key: &str) {
-        self.expanded_groups.insert(key.to_string());
-        self.rebuild_flat_list_keep_cursor();
-    }
 
     /// Toggle a group between collapsed (5 visible) and fully expanded.
     pub fn toggle_group(&mut self, key: &str) {
@@ -379,7 +365,6 @@ impl App {
     pub fn current_group_key(&self) -> Option<String> {
         match self.flat_list.get(self.cursor) {
             Some(FlatItem::GroupHeader(key)) => Some(key.clone()),
-            Some(FlatItem::LoadMore { group_key, .. }) => Some(group_key.clone()),
             Some(FlatItem::SessionEntry(idx)) => Some(self.sessions[*idx].group_key()),
             None => self
                 .selected_session
@@ -467,7 +452,7 @@ fn build_flat_list(
             continue;
         }
 
-        let is_expanded = expanded.contains(&key);
+        let is_expanded = expanded.contains(&key) || focused.is_some_and(|focused| focused == key);
         let total = indices.len();
         let visible = if is_expanded {
             total
@@ -481,12 +466,6 @@ fn build_flat_list(
         }
         for &idx in &indices[..visible] {
             flat.push(FlatItem::SessionEntry(idx));
-        }
-        if !is_expanded && total > MAX_SESSIONS_PER_GROUP {
-            flat.push(FlatItem::LoadMore {
-                group_key: key,
-                hidden_count: total - visible, // = total - MAX_SESSIONS_PER_GROUP when collapsed
-            });
         }
     }
 

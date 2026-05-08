@@ -17,7 +17,6 @@ const IDLE_COLOR: Color = Color::DarkGray;
 const ERROR_COLOR: Color = Color::Red;
 const ACCENT_COLOR: Color = Color::Cyan;
 const HEADER_COLOR: Color = Color::Magenta;
-const LOAD_MORE_COLOR: Color = Color::Yellow;
 const SELECTED_BG: Color = Color::Rgb(40, 56, 80);
 const USER_MSG_COLOR: Color = Color::Cyan;
 const AGENT_MSG_COLOR: Color = Color::White;
@@ -134,6 +133,7 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
                 };
                 let marker = if is_collapsed { "▸ " } else { "▾ " };
                 let focus_suffix = if is_focused_group { "  focused" } else { "" };
+                let count = group_session_count(app, path).to_string();
                 let style = if is_cursor && is_focused {
                     Style::default()
                         .fg(HEADER_COLOR)
@@ -144,11 +144,21 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
                         .fg(HEADER_COLOR)
                         .add_modifier(Modifier::BOLD)
                 };
+                let label_width =
+                    prefix.chars().count() + marker.chars().count() + label.chars().count();
+                let suffix_width = focus_suffix.chars().count() + count.chars().count();
+                let spacer = " ".repeat(
+                    (inner.width as usize)
+                        .saturating_sub(label_width + suffix_width)
+                        .max(1),
+                );
                 items.push(ListItem::new(Line::from(vec![
                     Span::raw(prefix),
                     Span::styled(marker, style),
                     Span::styled(label, style),
                     Span::styled(focus_suffix, Style::default().fg(Color::DarkGray)),
+                    Span::raw(spacer),
+                    Span::styled(count, Style::default().fg(Color::DarkGray)),
                 ])));
                 if is_cursor {
                     list_state.select(Some(list_idx));
@@ -199,34 +209,18 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
                 }
                 list_idx += 1;
             }
-            FlatItem::LoadMore { hidden_count, .. } => {
-                let is_cursor = app.cursor == flat_idx;
-                let prefix = if is_cursor && is_focused {
-                    "  ❯ "
-                } else {
-                    "    "
-                };
-                let style = if is_cursor && is_focused {
-                    Style::default()
-                        .fg(LOAD_MORE_COLOR)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(LOAD_MORE_COLOR)
-                };
-                items.push(ListItem::new(Line::from(vec![
-                    Span::raw(prefix),
-                    Span::styled(format!("… {hidden_count} more  [Enter to expand]"), style),
-                ])));
-                if is_cursor {
-                    list_state.select(Some(list_idx));
-                }
-                list_idx += 1;
-            }
         }
     }
 
     let list = List::new(items).highlight_style(Style::default().bg(SELECTED_BG));
     f.render_stateful_widget(list, inner, &mut list_state);
+}
+
+fn group_session_count(app: &App, group_key: &str) -> usize {
+    app.sessions
+        .iter()
+        .filter(|session| session.group_key() == group_key)
+        .count()
 }
 
 // ── Detail panel (right) ──────────────────────────────────────────────────────
