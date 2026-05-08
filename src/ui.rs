@@ -12,16 +12,21 @@ use ratatui::{
     Frame,
 };
 
-const RUNNING_COLOR: Color = Color::Green;
-const WAITING_COLOR: Color = Color::Yellow;
-const IDLE_COLOR: Color = Color::DarkGray;
-const ERROR_COLOR: Color = Color::Red;
-const ACCENT_COLOR: Color = Color::Cyan;
-const HEADER_COLOR: Color = Color::Magenta;
-const LOAD_MORE_COLOR: Color = Color::Yellow;
-const SELECTED_BG: Color = Color::Rgb(40, 56, 80);
-const USER_MSG_COLOR: Color = Color::Cyan;
-const AGENT_MSG_COLOR: Color = Color::White;
+const RUNNING_COLOR: Color = Color::Rgb(0x9e, 0xce, 0x6a);
+const WAITING_COLOR: Color = Color::Rgb(0xe0, 0xaf, 0x68);
+const IDLE_COLOR: Color = Color::Rgb(0x56, 0x5f, 0x89);
+const ERROR_COLOR: Color = Color::Rgb(0xf7, 0x76, 0x8e);
+const ACCENT_COLOR: Color = Color::Rgb(0x7a, 0xa2, 0xf7);
+const GROUP_COLOR: Color = Color::Rgb(0x7d, 0xcf, 0xff);
+const BACKGROUND_COLOR: Color = Color::Rgb(0x1a, 0x1b, 0x26);
+const SURFACE_COLOR: Color = Color::Rgb(0x24, 0x28, 0x3b);
+const TEXT_COLOR: Color = Color::Rgb(0xc0, 0xca, 0xf5);
+const MUTED_COLOR: Color = IDLE_COLOR;
+const LOAD_MORE_COLOR: Color = WAITING_COLOR;
+const SELECTED_BG: Color = ACCENT_COLOR;
+const SELECTED_FG: Color = BACKGROUND_COLOR;
+const USER_MSG_COLOR: Color = ACCENT_COLOR;
+const AGENT_MSG_COLOR: Color = TEXT_COLOR;
 /// Maximum lines shown per assistant response before truncating.
 const MAX_RESPONSE_LINES: usize = 20;
 
@@ -37,6 +42,11 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         }
         return;
     }
+
+    f.render_widget(
+        Block::default().style(Style::default().bg(BACKGROUND_COLOR)),
+        area,
+    );
 
     let outer = Layout::default()
         .direction(Direction::Vertical)
@@ -77,7 +87,7 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
     let border_style = if is_focused {
         Style::default().fg(ACCENT_COLOR)
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(MUTED_COLOR)
     };
 
     let title = if let Some(group) = app.focused_group.as_deref() {
@@ -93,6 +103,7 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         )
         .borders(Borders::ALL)
+        .style(Style::default().bg(SURFACE_COLOR))
         .border_style(border_style);
 
     let inner = block.inner(area);
@@ -102,14 +113,15 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
         let msg = Paragraph::new(Text::from(vec![
             Line::from(Span::styled(
                 "No Copilot sessions found.",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(MUTED_COLOR),
             )),
             Line::from(Span::raw("")),
             Line::from(Span::styled(
                 "Press [n] to start a new session.",
-                Style::default().fg(Color::Gray),
+                Style::default().fg(MUTED_COLOR),
             )),
         ]))
+        .style(Style::default().bg(SURFACE_COLOR))
         .alignment(Alignment::Center);
         let y = inner.height / 2;
         let center = Rect::new(inner.x, inner.y + y.saturating_sub(1), inner.width, 3);
@@ -132,18 +144,18 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
                 let focus_suffix = if is_focused_group { "  focused" } else { "" };
                 let style = if is_cursor && is_focused {
                     Style::default()
-                        .fg(HEADER_COLOR)
+                        .fg(SELECTED_FG)
                         .bg(SELECTED_BG)
                         .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default()
-                        .fg(HEADER_COLOR)
+                        .fg(GROUP_COLOR)
                         .add_modifier(Modifier::BOLD)
                 };
                 items.push(ListItem::new(Line::from(vec![
                     Span::raw(prefix),
                     Span::styled(label, style),
-                    Span::styled(focus_suffix, Style::default().fg(Color::DarkGray)),
+                    Span::styled(focus_suffix, Style::default().fg(MUTED_COLOR)),
                 ])));
                 if is_cursor {
                     list_state.select(Some(list_idx));
@@ -157,15 +169,13 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
 
                 let name_style = if is_cursor && is_focused {
                     Style::default()
-                        .fg(Color::White)
+                        .fg(SELECTED_FG)
                         .bg(SELECTED_BG)
                         .add_modifier(Modifier::BOLD)
                 } else if is_selected {
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD)
+                    Style::default().fg(TEXT_COLOR).add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default().fg(Color::White)
+                    Style::default().fg(TEXT_COLOR)
                 };
 
                 let prefix = if is_cursor && is_focused {
@@ -209,7 +219,9 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
         }
     }
 
-    let list = List::new(items).highlight_style(Style::default().bg(SELECTED_BG));
+    let list = List::new(items)
+        .style(Style::default().bg(SURFACE_COLOR))
+        .highlight_style(Style::default().fg(SELECTED_FG).bg(SELECTED_BG));
     f.render_stateful_widget(list, inner, &mut list_state);
 }
 
@@ -231,7 +243,7 @@ fn session_title_line(
         Span::raw(prefix.to_string()),
         Span::styled(title, name_style),
         Span::raw(spacer),
-        Span::styled(time, Style::default().fg(Color::DarkGray)),
+        Span::styled(time, Style::default().fg(MUTED_COLOR)),
     ])
 }
 
@@ -251,7 +263,7 @@ fn session_description_line(
 
     Line::from(vec![
         Span::raw(prefix),
-        Span::styled(description, Style::default().fg(Color::Gray)),
+        Span::styled(description, Style::default().fg(MUTED_COLOR)),
     ])
 }
 
@@ -292,27 +304,29 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
     let border_style = if is_focused {
         Style::default().fg(ACCENT_COLOR)
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(MUTED_COLOR)
     };
 
     let Some(idx) = app.selected_session else {
         let block = Block::default()
             .title(" Session Details ")
             .borders(Borders::ALL)
+            .style(Style::default().bg(SURFACE_COLOR))
             .border_style(border_style);
         let inner = block.inner(area);
         f.render_widget(block, area);
         let msg = Paragraph::new(Text::from(vec![
             Line::from(Span::styled(
                 "Select a session with j/k + Enter",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(MUTED_COLOR),
             )),
             Line::from(Span::raw("")),
             Line::from(Span::styled(
                 "Press [o] to open a live terminal session",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(MUTED_COLOR),
             )),
         ]))
+        .style(Style::default().bg(SURFACE_COLOR))
         .alignment(Alignment::Center);
         let cy = inner.height / 2;
         f.render_widget(
@@ -325,6 +339,7 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
     let session = &app.sessions[idx];
     let block = Block::default()
         .borders(Borders::ALL)
+        .style(Style::default().bg(SURFACE_COLOR))
         .border_style(border_style);
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -339,16 +354,14 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
 
     let info_lines = vec![
         Line::from(vec![
-            Span::styled("  Title:     ", Style::default().fg(Color::Gray)),
+            Span::styled("  Title:     ", Style::default().fg(MUTED_COLOR)),
             Span::styled(
                 session.display_name(),
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(TEXT_COLOR).add_modifier(Modifier::BOLD),
             ),
         ]),
         Line::from(vec![
-            Span::styled("  Status:    ", Style::default().fg(Color::Gray)),
+            Span::styled("  Status:    ", Style::default().fg(MUTED_COLOR)),
             Span::styled(
                 format!("{status_sym} {}", session.status.label()),
                 Style::default()
@@ -362,8 +375,10 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
         .block(
             Block::default()
                 .borders(Borders::BOTTOM)
-                .border_style(Style::default().fg(Color::DarkGray)),
+                .style(Style::default().bg(SURFACE_COLOR))
+                .border_style(Style::default().fg(MUTED_COLOR)),
         )
+        .style(Style::default().bg(SURFACE_COLOR))
         .wrap(Wrap { trim: false });
     f.render_widget(info_card, layout[0]);
 
@@ -376,12 +391,12 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
     if turns.is_empty() {
         turn_lines.push(Line::from(Span::styled(
             "  No conversation history yet.",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(MUTED_COLOR),
         )));
         turn_lines.push(Line::from(Span::raw("")));
         turn_lines.push(Line::from(Span::styled(
             "  Press [o] to open this session in Copilot.",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(MUTED_COLOR),
         )));
     } else {
         for turn in &turns {
@@ -416,14 +431,14 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
                 if resp.lines().count() > MAX_RESPONSE_LINES {
                     turn_lines.push(Line::from(Span::styled(
                         "  … (truncated)",
-                        Style::default().fg(Color::DarkGray),
+                        Style::default().fg(MUTED_COLOR),
                     )));
                 }
                 turn_lines.push(Line::from(Span::raw("")));
             }
             turn_lines.push(Line::from(Span::styled(
                 format!("  ─── Turn {} ", turn.turn_index + 1),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(MUTED_COLOR),
             )));
             turn_lines.push(Line::from(Span::raw("")));
         }
@@ -446,9 +461,11 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
         .block(
             Block::default()
                 .title(log_title)
-                .title_style(Style::default().fg(Color::Gray))
+                .title_style(Style::default().fg(MUTED_COLOR))
+                .style(Style::default().bg(SURFACE_COLOR))
                 .borders(Borders::NONE),
         )
+        .style(Style::default().bg(SURFACE_COLOR))
         .scroll((app.detail_scroll as u16, 0))
         .wrap(Wrap { trim: false });
     f.render_widget(turns_para, layout[1]);
@@ -476,6 +493,7 @@ fn status_display(status: &SessionStatus) -> (Color, &'static str) {
 fn draw_embedded_terminal(f: &mut Frame, term: &crate::terminal::EmbeddedTerminal, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
+        .style(Style::default().bg(SURFACE_COLOR))
         .border_style(Style::default().fg(RUNNING_COLOR));
 
     let inner = block.inner(area);
@@ -575,7 +593,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     let (text, style) = match app.mode {
         Mode::NewSessionDir => (
             "Launch: Enter  Cancel: Esc",
-            Style::default().fg(Color::Yellow),
+            Style::default().fg(WAITING_COLOR),
         ),
         Mode::Terminal => (
             "Fullscreen: Ctrl+F  Detach: Ctrl+W  Input: forwarded to Copilot",
@@ -590,12 +608,14 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
                     "Scroll: j/k  Back: Esc/h  Focus dir: f  Open: o  New: n  Reload: r  Quit: q"
                 }
             };
-            (t, Style::default().fg(Color::Gray))
+            (t, Style::default().fg(MUTED_COLOR))
         }
     };
 
     f.render_widget(
-        Paragraph::new(Span::styled(text, style)).alignment(Alignment::Center),
+        Paragraph::new(Span::styled(text, style))
+            .style(Style::default().bg(BACKGROUND_COLOR))
+            .alignment(Alignment::Center),
         area,
     );
 }
@@ -613,14 +633,16 @@ fn draw_input_popup(f: &mut Frame, title: &str, input: &str, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         )
         .borders(Borders::ALL)
+        .style(Style::default().bg(SURFACE_COLOR))
         .border_style(Style::default().fg(ACCENT_COLOR));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
     f.render_widget(
         Paragraph::new(Span::styled(
             format!("▶ {input}█"),
-            Style::default().fg(Color::White),
-        )),
+            Style::default().fg(TEXT_COLOR),
+        ))
+        .style(Style::default().bg(SURFACE_COLOR)),
         inner,
     );
 }
@@ -639,7 +661,7 @@ fn draw_status_toast(f: &mut Frame, app: &App, area: Rect) {
             Paragraph::new(Span::styled(
                 format!("  {msg}  "),
                 Style::default()
-                    .fg(Color::Black)
+                    .fg(BACKGROUND_COLOR)
                     .bg(RUNNING_COLOR)
                     .add_modifier(Modifier::BOLD),
             )),
