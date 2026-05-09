@@ -434,7 +434,7 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
         } else {
             (
                 "Select a session with j/k + Enter",
-                "Press [o] to open a live terminal session",
+                "Press [o] for native terminal or [e] for embedded preview",
             )
         };
         let msg = Paragraph::new(Text::from(vec![
@@ -617,7 +617,7 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
         )));
         turn_lines.push(Line::from(Span::raw("")));
         turn_lines.push(Line::from(Span::styled(
-            "  Press [o] to open this session in Copilot.",
+            "  Press [o] for native terminal or [e] for embedded preview.",
             Style::default().fg(MUTED_COLOR),
         )));
     } else {
@@ -940,9 +940,14 @@ fn footer_shortcuts(app: &App) -> Vec<(&'static str, &'static str)> {
     match app.active_panel {
         Panel::Sessions => {
             let mut shortcuts = vec![("Navigate", "j/k"), ("Filter", "Tab or /")];
-            if app.flat_list.get(app.cursor).is_some() {
+            if let Some(idx) = app.flat_list.get(app.cursor).copied() {
                 shortcuts.push(("View", "Enter"));
-                shortcuts.push(("Open", "o"));
+                if app.sessions[idx].source == SessionSource::Remote {
+                    shortcuts.push(("Open browser", "o"));
+                } else {
+                    shortcuts.push(("Native", "o"));
+                    shortcuts.push(("Preview", "e"));
+                }
             }
             shortcuts.push(("New", "n"));
             shortcuts.push(("Help", "?"));
@@ -950,8 +955,13 @@ fn footer_shortcuts(app: &App) -> Vec<(&'static str, &'static str)> {
         }
         Panel::Detail => {
             let mut shortcuts = vec![("Scroll", "j/k"), ("Back", "h/Esc"), ("Filter", "Tab or /")];
-            if app.selected_session.is_some() {
-                shortcuts.push(("Open", "o"));
+            if let Some(idx) = app.selected_session {
+                if app.sessions[idx].source == SessionSource::Remote {
+                    shortcuts.push(("Open browser", "o"));
+                } else {
+                    shortcuts.push(("Native", "o"));
+                    shortcuts.push(("Preview", "e"));
+                }
             }
             shortcuts.push(("New", "n"));
             shortcuts.push(("Help", "?"));
@@ -1090,8 +1100,9 @@ fn help_lines() -> Vec<Line<'static>> {
         help_shortcut("j / ↓", "Move selection down"),
         help_shortcut("k / ↑", "Move selection up"),
         help_shortcut("Enter / Space", "View the selected session"),
-        help_shortcut("o", "Open the selected session in Copilot"),
-        help_shortcut("n", "Launch a new Copilot session"),
+        help_shortcut("o", "Attach to the session in the native terminal"),
+        help_shortcut("e", "Open the selected session in the embedded preview"),
+        help_shortcut("n", "Launch a new Copilot session in the native terminal"),
         help_shortcut("r", "Reload sessions from disk"),
         Line::from(""),
         help_heading("Detail panel"),
@@ -1099,8 +1110,9 @@ fn help_lines() -> Vec<Line<'static>> {
         help_shortcut("k / ↑", "Scroll conversation up"),
         help_shortcut("PageDown / PageUp", "Scroll conversation by page"),
         help_shortcut("h / ← / Esc", "Return to the sessions panel"),
-        help_shortcut("o", "Open the selected session in Copilot"),
-        help_shortcut("n", "Launch a new Copilot session"),
+        help_shortcut("o", "Attach to the session in the native terminal"),
+        help_shortcut("e", "Open the selected session in the embedded preview"),
+        help_shortcut("n", "Launch a new Copilot session in the native terminal"),
         help_shortcut("r", "Reload sessions from disk"),
         Line::from(""),
         help_heading("Embedded terminal"),

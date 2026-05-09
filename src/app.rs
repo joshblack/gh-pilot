@@ -74,13 +74,18 @@ pub struct SessionFilterCounts {
 #[derive(Debug, Clone)]
 pub enum PendingAction {
     None,
+    /// Resume an existing session by attaching tmux in the user's real terminal.
+    OpenNative {
+        id: String,
+        cwd: PathBuf,
+    },
     /// Resume an existing session embedded in the right panel.
     OpenEmbedded {
         id: String,
         cwd: PathBuf,
     },
-    /// Start a new copilot session in `dir`, embedded in the right panel.
-    LaunchNew {
+    /// Start a new copilot session in `dir`, attached in the user's real terminal.
+    LaunchNewNative {
         dir: PathBuf,
     },
     /// Open a remote agent task in the browser.
@@ -448,12 +453,12 @@ impl App {
         self.mode = Mode::LaunchingNewSession;
         self.active_panel = Panel::Detail;
         self.status_message = Some("Creating new Copilot session…".into());
-        self.pending_action = PendingAction::LaunchNew { dir };
+        self.pending_action = PendingAction::LaunchNewNative { dir };
     }
 
     pub fn launching_new_session_dir(&self) -> Option<&Path> {
         match &self.pending_action {
-            PendingAction::LaunchNew { dir } if self.mode == Mode::LaunchingNewSession => {
+            PendingAction::LaunchNewNative { dir } if self.mode == Mode::LaunchingNewSession => {
                 Some(dir.as_path())
             }
             _ => None,
@@ -510,7 +515,7 @@ impl App {
     }
 
     /// Queue opening an embedded terminal for the session under the cursor.
-    pub fn open_session_embedded(&mut self) {
+    pub fn open_session_native(&mut self) {
         if let Some(idx) = self.session_at_cursor() {
             if self.sessions[idx].source == SessionSource::Remote {
                 self.selected_session = Some(idx);
@@ -520,6 +525,23 @@ impl App {
                     Some(url) => self.pending_action = PendingAction::OpenRemoteTask { url },
                     None => self.status_message = Some("Remote task URL not available".into()),
                 }
+                return;
+            }
+            let id = self.sessions[idx].id.clone();
+            let cwd = self.sessions[idx].cwd.clone();
+            self.selected_session = Some(idx);
+            self.active_panel = Panel::Detail;
+            self.pending_action = PendingAction::OpenNative { id, cwd };
+        }
+    }
+
+    /// Queue opening an embedded terminal preview for the session under the cursor.
+    pub fn open_session_embedded(&mut self) {
+        if let Some(idx) = self.session_at_cursor() {
+            if self.sessions[idx].source == SessionSource::Remote {
+                self.selected_session = Some(idx);
+                self.active_panel = Panel::Detail;
+                self.load_selected_remote_preview();
                 return;
             }
             let id = self.sessions[idx].id.clone();
@@ -1403,7 +1425,7 @@ mod tests {
             Some("https://github.com/owner/repo/pull/42/agent-sessions/remote".to_string());
         let mut app = app_with_sessions(vec![remote]);
 
-        app.open_session_embedded();
+        app.open_session_native();
 
         match app.pending_action {
             PendingAction::OpenRemoteTask { ref url } => {
@@ -1413,6 +1435,30 @@ mod tests {
                 );
             }
             _ => panic!("expected remote task to open in browser"),
+        }
+    }
+
+    #[test]
+    fn opening_local_session_uses_native_terminal_by_default() {
+        let mut app = app_with_sessions(vec![session("local", SessionSource::Local)]);
+
+        app.open_session_native();
+
+        match app.pending_action {
+            PendingAction::OpenNative { ref id, .. } => assert_eq!(id, "local"),
+            _ => panic!("expected native terminal action"),
+        }
+    }
+
+    #[test]
+    fn opening_local_session_embedded_uses_preview_action() {
+        let mut app = app_with_sessions(vec![session("local", SessionSource::Local)]);
+
+        app.open_session_embedded();
+
+        match app.pending_action {
+            PendingAction::OpenEmbedded { ref id, .. } => assert_eq!(id, "local"),
+            _ => panic!("expected embedded terminal action"),
         }
     }
 }

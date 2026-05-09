@@ -116,9 +116,7 @@ impl EmbeddedTerminal {
             cmd.arg("-t");
             cmd.arg(&tmux_session);
         }
-        // Tell copilot it's running in a color-capable terminal.
-        cmd.env("TERM", COPILOT_TERM);
-        cmd.env("COLORTERM", COPILOT_COLORTERM);
+        apply_terminal_env(&mut cmd);
 
         // Spawn the process inside the slave PTY, then drop the slave so that
         // we receive EOF on the master when the child exits.
@@ -312,6 +310,96 @@ fn tmux_pane_title(tmux_session: &str) -> Option<String> {
     title_from_tmux_output(&output.stdout)
 }
 
+pub fn ensure_tmux_session(
+    session_id: &str,
+    copilot_bin: &Path,
+    args: &[impl AsRef<OsStr>],
+    cwd: Option<&Path>,
+) -> anyhow::Result<String> {
+    let tmux_session = tmux_session_name(session_id);
+    if tmux_has_session(&tmux_session) {
+        return Ok(tmux_session);
+    }
+
+    let mut command = Command::new("tmux");
+    command
+        .arg("new-session")
+        .arg("-d")
+        .arg("-s")
+        .arg(&tmux_session);
+    if let Some(dir) = cwd {
+        command.arg("-c").arg(dir);
+    }
+    command.arg(copilot_shell_command(copilot_bin, args));
+    let status = command.status()?;
+    if !status.success() {
+        anyhow::bail!("tmux new-session exited with {status}");
+    }
+
+    configure_tmux_session(&tmux_session)?;
+    Ok(tmux_session)
+}
+
+pub fn attach_tmux_session(tmux_session: &str) -> anyhow::Result<()> {
+    let status = Command::new("tmux")
+        .arg("-2")
+        .arg("-T")
+        .arg(TMUX_CLIENT_FEATURES)
+        .arg("attach-session")
+        .arg("-t")
+        .arg(tmux_session)
+        .status()?;
+    if !status.success() {
+        anyhow::bail!("tmux attach-session exited with {status}");
+    }
+    Ok(())
+}
+
+pub fn reuse_tmux_session(tmux_session: &str, session_id: &str) -> anyhow::Result<String> {
+    let target = tmux_session_name(session_id);
+    if tmux_session == target {
+        return Ok(target);
+    }
+
+    if !tmux_has_session(&target) && tmux_has_session(tmux_session) {
+        let status = Command::new("tmux")
+            .arg("rename-session")
+            .arg("-t")
+            .arg(tmux_session)
+            .arg(&target)
+            .status()?;
+        if !status.success() {
+            anyhow::bail!("tmux rename-session exited with {status}");
+        }
+    }
+
+    Ok(if tmux_has_session(&target) {
+        target
+    } else {
+        tmux_session.to_string()
+    })
+}
+
+fn configure_tmux_session(tmux_session: &str) -> anyhow::Result<()> {
+    let status = Command::new("tmux")
+        .arg("set-option")
+        .arg("-t")
+        .arg(tmux_session)
+        .arg("status")
+        .arg("off")
+        .arg(";")
+        .arg("set-option")
+        .arg("-t")
+        .arg(tmux_session)
+        .arg("mouse")
+        .arg("on")
+        .status()?;
+    if !status.success() {
+        anyhow::bail!("tmux set-option exited with {status}");
+    }
+    Ok(())
+}
+
 fn title_from_tmux_output(output: &[u8]) -> Option<String> {
     let title = String::from_utf8_lossy(output).trim().to_string();
     (!title.is_empty()).then_some(title)
@@ -349,18 +437,55 @@ pub(crate) fn tmux_session_name(session_id: &str) -> String {
 }
 
 fn copilot_shell_command(copilot_bin: &Path, args: &[impl AsRef<OsStr>]) -> String {
-    let words = [
-        "env".to_string(),
-        format!("TERM={COPILOT_TERM}"),
-        format!("COLORTERM={COPILOT_COLORTERM}"),
-        copilot_bin.as_os_str().to_string_lossy().to_string(),
-    ]
-    .into_iter()
-    .chain(
-        args.iter()
-            .map(|arg| arg.as_ref().to_string_lossy().to_string()),
-    );
+    copilot_shell_command_with_env(copilot_bin, args, |name| std::env::var(name).ok())
+}
+
+fn copilot_shell_command_with_env(
+    copilot_bin: &Path,
+    args: &[impl AsRef<OsStr>],
+    env: impl Fn(&str) -> Option<String>,
+) -> String {
+    let words = std::iter::once("env".to_string())
+        .chain(terminal_env_assignments(env))
+        .chain(std::iter::once(
+            copilot_bin.as_os_str().to_string_lossy().to_string(),
+        ))
+        .chain(
+            args.iter()
+                .map(|arg| arg.as_ref().to_string_lossy().to_string()),
+        );
     shell_words::join(words)
+}
+
+fn terminal_env_assignments(env: impl Fn(&str) -> Option<String>) -> Vec<String> {
+    let terminal_env = [
+        ("TERM", COPILOT_TERM),
+        ("COLORTERM", COPILOT_COLORTERM),
+        ("TERM_PROGRAM", ""),
+        ("TERM_PROGRAM_VERSION", ""),
+        ("WEZTERM_EXECUTABLE", ""),
+        ("WEZTERM_PANE", ""),
+        ("KITTY_WINDOW_ID", ""),
+        ("VTE_VERSION", ""),
+    ];
+
+    terminal_env
+        .into_iter()
+        .filter_map(|(name, fallback)| {
+            env(name)
+                .filter(|value| !value.trim().is_empty())
+                .or_else(|| (!fallback.is_empty()).then(|| fallback.to_string()))
+                .map(|value| format!("{name}={value}"))
+        })
+        .collect()
+}
+
+fn apply_terminal_env(cmd: &mut CommandBuilder) {
+    for assignment in terminal_env_assignments(|name| std::env::var(name).ok()) {
+        if let Some((name, value)) = assignment.split_once('=') {
+            cmd.env(name, value);
+        }
+    }
 }
 
 // ── Key → byte sequence mapping ──────────────────────────────────────────────
@@ -477,15 +602,35 @@ mod tests {
     }
 
     #[test]
-    fn copilot_shell_command_sets_native_terminal_capability_env() {
-        let command = copilot_shell_command(
+    fn copilot_shell_command_preserves_terminal_capability_env() {
+        let command = copilot_shell_command_with_env(
             Path::new("/usr/local/bin/copilot"),
             &["-C", "/tmp/project dir", "--resume=session-1"],
+            |name| match name {
+                "TERM" => Some("xterm-kitty".to_string()),
+                "COLORTERM" => Some("truecolor".to_string()),
+                "TERM_PROGRAM" => Some("kitty".to_string()),
+                _ => None,
+            },
         );
 
         assert_eq!(
             command,
-            "env 'TERM=xterm-256color' 'COLORTERM=truecolor' /usr/local/bin/copilot -C '/tmp/project dir' '--resume=session-1'"
+            "env 'TERM=xterm-kitty' 'COLORTERM=truecolor' 'TERM_PROGRAM=kitty' /usr/local/bin/copilot -C '/tmp/project dir' '--resume=session-1'"
+        );
+    }
+
+    #[test]
+    fn copilot_shell_command_uses_color_fallbacks() {
+        let command = copilot_shell_command_with_env(
+            Path::new("/usr/local/bin/copilot"),
+            &["-C", "/tmp"],
+            |_| None,
+        );
+
+        assert_eq!(
+            command,
+            "env 'TERM=xterm-256color' 'COLORTERM=truecolor' /usr/local/bin/copilot -C /tmp"
         );
     }
 }
