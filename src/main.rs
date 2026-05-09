@@ -308,6 +308,7 @@ fn handle_key(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
     match app.mode {
         Mode::Normal => handle_normal(app, key, modifiers),
         Mode::NewSessionDir => handle_input(app, key),
+        Mode::DirectoryFilter => handle_directory_filter_input(app, key, modifiers),
         Mode::Terminal => handle_terminal(app, key, modifiers),
         Mode::Help => handle_help(app, key),
     }
@@ -324,6 +325,22 @@ fn handle_normal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
     }
     if key == KeyCode::Char('?') {
         app.open_help();
+        return;
+    }
+    if key == KeyCode::Tab {
+        app.next_session_filter();
+        return;
+    }
+    if key == KeyCode::BackTab {
+        app.previous_session_filter();
+        return;
+    }
+    if key == KeyCode::Char('/') {
+        app.begin_directory_filter();
+        return;
+    }
+    if key == KeyCode::Char('u') && modifiers.contains(KeyModifiers::CONTROL) {
+        app.clear_directory_filter();
         return;
     }
 
@@ -402,6 +419,23 @@ fn handle_input(app: &mut App, key: KeyCode) {
     }
 }
 
+fn handle_directory_filter_input(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
+    match key {
+        KeyCode::Enter => app.confirm_directory_filter(),
+        KeyCode::Esc => app.cancel_input(),
+        KeyCode::Backspace => {
+            app.input_buffer.pop();
+        }
+        KeyCode::Char('u') if modifiers.contains(KeyModifiers::CONTROL) => {
+            app.input_buffer.clear();
+        }
+        KeyCode::Char(c) => {
+            app.input_buffer.push(c);
+        }
+        _ => {}
+    }
+}
+
 fn handle_terminal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
     // Ctrl+W detaches from the embedded session.
     if key == KeyCode::Char('w') && modifiers.contains(KeyModifiers::CONTROL) {
@@ -446,6 +480,15 @@ mod tests {
 
         handle_help(&mut app, KeyCode::Esc);
         assert_eq!(app.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn slash_opens_directory_filter_prompt() {
+        let mut app = App::new(PathBuf::from("/tmp/copilot"), PathBuf::from("/tmp"));
+
+        handle_normal(&mut app, KeyCode::Char('/'), KeyModifiers::NONE);
+
+        assert_eq!(app.mode, Mode::DirectoryFilter);
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use crate::app::{App, Mode, Panel};
+use crate::app::{App, Mode, Panel, SessionFilter};
 use crate::session::{load_turns, session_db_path, CopilotSession, SessionSource, SessionStatus};
 use chrono::{DateTime, Utc};
 use ratatui::{
@@ -70,6 +70,14 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             area,
         );
     }
+    if app.mode == Mode::DirectoryFilter {
+        draw_input_popup(
+            f,
+            " Filter Sessions — Directory (Enter to apply, Esc to cancel) ",
+            &app.input_buffer,
+            area,
+        );
+    }
     if app.mode == Mode::Help {
         draw_help_popup(f, app, area);
     }
@@ -84,11 +92,20 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(35), Constraint::Percentage(65)])
         .split(area);
-    draw_sessions_panel(f, app, cols[0]);
+    draw_session_list(f, app, cols[0]);
     draw_detail_panel(f, app, cols[1]);
 }
 
 // ── Sessions panel (left) ─────────────────────────────────────────────────────
+
+fn draw_session_list(f: &mut Frame, app: &mut App, area: Rect) {
+    let content = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(4), Constraint::Min(0)])
+        .split(area);
+    draw_session_filter_pane(f, app, content[0]);
+    draw_sessions_panel(f, app, content[1]);
+}
 
 fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
     let is_focused = app.active_panel == Panel::Sessions;
@@ -111,23 +128,31 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
 
     let inner = block.inner(area);
     f.render_widget(block, area);
+    let list_area = inner;
 
     if app.flat_list.is_empty() {
+        let title = if app.sessions.is_empty() {
+            "No Copilot sessions found."
+        } else {
+            "No sessions match the active filters."
+        };
         let msg = Paragraph::new(Text::from(vec![
-            Line::from(Span::styled(
-                "No Copilot sessions found.",
-                Style::default().fg(MUTED_COLOR),
-            )),
+            Line::from(Span::styled(title, Style::default().fg(MUTED_COLOR))),
             Line::from(Span::raw("")),
             Line::from(Span::styled(
-                "Press [n] to start a new session.",
+                "No sessions match the current filters.",
                 Style::default().fg(MUTED_COLOR),
             )),
         ]))
         .style(Style::default().bg(SURFACE_COLOR))
         .alignment(Alignment::Center);
-        let y = inner.height / 2;
-        let center = Rect::new(inner.x, inner.y + y.saturating_sub(1), inner.width, 3);
+        let y = list_area.height / 2;
+        let center = Rect::new(
+            list_area.x,
+            list_area.y + y.saturating_sub(1),
+            list_area.width,
+            3,
+        );
         f.render_widget(msg, center);
         return;
     }
@@ -155,7 +180,7 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
         items.push(ListItem::new(Text::from(vec![
             session_title_line(
                 session,
-                inner.width as usize,
+                list_area.width as usize,
                 prefix,
                 is_cursor && is_focused,
                 name_style,
@@ -163,7 +188,7 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
             ),
             session_description_line(
                 session,
-                inner.width as usize,
+                list_area.width as usize,
                 prefix,
                 is_cursor && is_focused,
             ),
@@ -177,7 +202,77 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
     let list = List::new(items)
         .style(Style::default().bg(SURFACE_COLOR))
         .highlight_style(Style::default());
-    f.render_stateful_widget(list, inner, &mut list_state);
+    f.render_stateful_widget(list, list_area, &mut list_state);
+}
+
+fn draw_session_filter_pane(f: &mut Frame, app: &App, area: Rect) {
+    let counts = app.session_filter_counts();
+    let dir_filter = if app.directory_filter.is_empty() {
+        "all directories".to_string()
+    } else {
+        short_path(&app.directory_filter)
+    };
+
+    let lines = vec![
+        Line::from(vec![
+            filter_tab(
+                app.session_filter == SessionFilter::All,
+                "All",
+                counts.all,
+                MUTED_COLOR,
+            ),
+            Span::raw(" "),
+            filter_tab(
+                app.session_filter == SessionFilter::Running,
+                "●",
+                counts.running,
+                RUNNING_COLOR,
+            ),
+            Span::raw(" "),
+            filter_tab(
+                app.session_filter == SessionFilter::Pending,
+                "●",
+                counts.pending,
+                WAITING_COLOR,
+            ),
+            Span::raw(" "),
+            filter_tab(
+                app.session_filter == SessionFilter::Remote,
+                "",
+                counts.remote,
+                REMOTE_COLOR,
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("Directory: ", Style::default().fg(MUTED_COLOR)),
+            Span::styled(dir_filter, Style::default().fg(TEXT_COLOR)),
+        ]),
+    ];
+
+    let pane = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .title(" Filters ")
+                .title_style(Style::default().fg(MUTED_COLOR))
+                .borders(Borders::ALL)
+                .style(Style::default().bg(SURFACE_COLOR))
+                .border_style(Style::default().fg(MUTED_COLOR)),
+        )
+        .style(Style::default().bg(SURFACE_COLOR));
+    f.render_widget(pane, area);
+}
+
+fn filter_tab(active: bool, label: &'static str, count: usize, color: Color) -> Span<'static> {
+    let style = if active {
+        Style::default()
+            .fg(BACKGROUND_COLOR)
+            .bg(color)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(color)
+    };
+
+    Span::styled(format!(" {label} ({count}) "), style)
 }
 
 fn active_prefix(prefix: &str, is_active: bool) -> Span<'static> {
@@ -935,6 +1030,10 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
             "Launch: Enter  Cancel: Esc".to_string(),
             Style::default().fg(WAITING_COLOR),
         ),
+        Mode::DirectoryFilter => (
+            "Apply: Enter  Clear input: Ctrl+U  Cancel: Esc".to_string(),
+            Style::default().fg(WAITING_COLOR),
+        ),
         Mode::Terminal => (
             "Fullscreen: Ctrl+F  Detach: Ctrl+W  Input: forwarded to Copilot".to_string(),
             Style::default().fg(RUNNING_COLOR),
@@ -965,7 +1064,7 @@ fn footer_text(app: &App) -> String {
 fn footer_shortcuts(app: &App) -> Vec<(&'static str, &'static str)> {
     match app.active_panel {
         Panel::Sessions => {
-            let mut shortcuts = vec![("Navigate", "j/k")];
+            let mut shortcuts = vec![("Navigate", "j/k"), ("Filter", "Tab or /")];
             if app.flat_list.get(app.cursor).is_some() {
                 shortcuts.push(("View", "Enter"));
                 shortcuts.push(("Open", "o"));
@@ -975,7 +1074,7 @@ fn footer_shortcuts(app: &App) -> Vec<(&'static str, &'static str)> {
             shortcuts
         }
         Panel::Detail => {
-            let mut shortcuts = vec![("Scroll", "j/k"), ("Back", "h/Esc")];
+            let mut shortcuts = vec![("Scroll", "j/k"), ("Back", "h/Esc"), ("Filter", "Tab or /")];
             if app.selected_session.is_some() {
                 shortcuts.push(("Open", "o"));
             }
@@ -1056,6 +1155,9 @@ fn help_lines() -> Vec<Line<'static>> {
     vec![
         help_heading("Global"),
         help_shortcut("?", "Show or hide this shortcut help"),
+        help_shortcut("Tab / Shift+Tab", "Switch session status tabs"),
+        help_shortcut("/", "Filter sessions by directory"),
+        help_shortcut("Ctrl+U", "Clear the directory filter"),
         help_shortcut("q", "Quit from normal mode"),
         help_shortcut("Ctrl+C", "Quit"),
         Line::from(""),
