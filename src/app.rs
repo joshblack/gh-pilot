@@ -22,6 +22,8 @@ pub enum Mode {
     NewSessionDir,
     /// An embedded copilot session is live in the right panel.
     Terminal,
+    /// Shortcut help popup is open.
+    Help,
 }
 
 /// Actions that require access to the terminal size (only available in the
@@ -58,6 +60,7 @@ pub struct App {
     pub mode: Mode,
     pub input_buffer: String,
     pub detail_scroll: usize,
+    pub help_scroll: usize,
     pub should_quit: bool,
     pub status_message: Option<String>,
     pub pending_action: PendingAction,
@@ -89,6 +92,7 @@ impl App {
             mode: Mode::Normal,
             input_buffer: String::new(),
             detail_scroll: 0,
+            help_scroll: 0,
             should_quit: false,
             status_message: None,
             pending_action: PendingAction::None,
@@ -227,6 +231,32 @@ impl App {
 
     pub fn scroll_detail_page_down(&mut self) {
         self.detail_scroll += DETAIL_PAGE_SCROLL_AMOUNT;
+    }
+
+    pub fn open_help(&mut self) {
+        self.mode = Mode::Help;
+        self.help_scroll = 0;
+    }
+
+    pub fn close_help(&mut self) {
+        self.mode = Mode::Normal;
+        self.help_scroll = 0;
+    }
+
+    pub fn scroll_help_up(&mut self) {
+        self.help_scroll = self.help_scroll.saturating_sub(1);
+    }
+
+    pub fn scroll_help_down(&mut self) {
+        self.help_scroll += 1;
+    }
+
+    pub fn scroll_help_page_up(&mut self) {
+        self.help_scroll = self.help_scroll.saturating_sub(DETAIL_PAGE_SCROLL_AMOUNT);
+    }
+
+    pub fn scroll_help_page_down(&mut self) {
+        self.help_scroll += DETAIL_PAGE_SCROLL_AMOUNT;
     }
 
     // ── Session actions ───────────────────────────────────────────────────────

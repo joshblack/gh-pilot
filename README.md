@@ -18,6 +18,7 @@ A **terminal session manager for AI coding agents** — a `gh` extension written
 - **Launch new sessions** — `n` to start `copilot -C <dir>` with the current directory pre-filled
 - **Resume sessions** — `o` to resume any existing session with `copilot --resume=<id>`
 - **Reload** — `r` to refresh from disk at any time
+- **Shortcut help** — `?` shows a scrollable shortcut reference
 
 ---
 
@@ -66,6 +67,7 @@ cargo build --release
 | `o` | Open/resume in Copilot |
 | `n` | Launch new Copilot session |
 | `r` | Reload sessions from disk |
+| `?` | Show shortcut help |
 | `q` | Quit |
 
 ### Detail panel (right)
@@ -77,6 +79,7 @@ cargo build --release
 | `o` | Open/resume in Copilot |
 | `Esc` / `h` / `←` | Return to sessions list |
 | `n` | Launch new Copilot session |
+| `?` | Show shortcut help |
 | `q` | Quit |
 
 ### New session prompt
@@ -86,6 +89,15 @@ cargo build --release
 | `Enter` | Launch `copilot -C <dir>` |
 | `Esc` | Cancel |
 | Type | Edit the directory path |
+
+### Shortcut help
+
+| Key | Action |
+|-----|--------|
+| `j` / `↓` / scroll | Scroll down |
+| `k` / `↑` / scroll | Scroll up |
+| `PageDown` / `PageUp` | Scroll by page |
+| `Esc` / `q` / `?` | Close |
 
 ---
 
