@@ -410,6 +410,11 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
         }
     }
 
+    if app.mode == Mode::LaunchingNewSession {
+        draw_new_session_loading(f, app, area);
+        return;
+    }
+
     let is_focused = app.active_panel == Panel::Detail;
     let border_style = if is_focused {
         Style::default().fg(ACCENT_COLOR)
@@ -702,6 +707,42 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
             .end_symbol(Some("↓"));
         f.render_stateful_widget(scrollbar, layout[1], &mut scroll_state);
     }
+}
+
+fn draw_new_session_loading(f: &mut Frame, app: &App, area: Rect) {
+    let block = Block::default()
+        .title(" Creating New Session ")
+        .borders(Borders::ALL)
+        .style(Style::default().bg(SURFACE_COLOR))
+        .border_style(Style::default().fg(WAITING_COLOR));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let directory = app
+        .launching_new_session_dir()
+        .map(|dir| dir.to_string_lossy().to_string())
+        .unwrap_or_else(|| "selected directory".into());
+    let msg = Paragraph::new(Text::from(vec![
+        Line::from(Span::styled(
+            "Creating a new Copilot session…",
+            Style::default()
+                .fg(WAITING_COLOR)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::raw("")),
+        Line::from(Span::styled(
+            "The terminal will open here as soon as it is ready.",
+            Style::default().fg(MUTED_COLOR),
+        )),
+        Line::from(Span::styled(directory, Style::default().fg(MUTED_COLOR))),
+    ]))
+    .style(Style::default().bg(SURFACE_COLOR))
+    .alignment(Alignment::Center);
+    let cy = inner.height / 2;
+    f.render_widget(
+        msg,
+        Rect::new(inner.x, inner.y + cy.saturating_sub(2), inner.width, 4),
+    );
 }
 
 fn push_markdown_lines(
@@ -1068,6 +1109,10 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     let (text, style) = match app.mode {
         Mode::NewSessionDir => (
             "Launch: Enter  Suggestions: ↑/↓  Clear input: Ctrl+U  Cancel: Esc".to_string(),
+            Style::default().fg(WAITING_COLOR),
+        ),
+        Mode::LaunchingNewSession => (
+            "Creating new Copilot session…".to_string(),
             Style::default().fg(WAITING_COLOR),
         ),
         Mode::DirectoryFilter => (

@@ -11,7 +11,9 @@ use crossterm::{
         MouseEvent, MouseEventKind,
     },
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{
+        disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen, SetTitle,
+    },
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 use session::copilot_binary;
@@ -60,7 +62,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn run_event_loop<B: ratatui::backend::Backend>(
+fn run_event_loop<B: ratatui::backend::Backend + Write>(
     terminal: &mut Terminal<B>,
     app: &mut App,
 ) -> Result<()>
@@ -73,11 +75,13 @@ where
     let mut last_new_session_reload_check: Option<Instant> = None;
     let mut last_status_poll = Instant::now();
     let mut terminal_progress_visible = false;
+    let mut last_terminal_title = String::new();
 
     loop {
         app.poll_session_loads();
         app.poll_remote_log_loads();
         resize_embedded_terminal(app, terminal.size()?);
+        update_terminal_title(terminal, app, &mut last_terminal_title)?;
         terminal.draw(|f| ui::draw(f, app))?;
         forward_terminal_progress(app, &mut terminal_progress_visible);
 
@@ -141,12 +145,14 @@ where
                                 app.terminal_fullscreen = false;
                             }
                             Err(e) => {
+                                app.mode = Mode::Normal;
                                 app.status_message = Some(format!("Failed to launch: {e}"));
                                 status_since = Some(Instant::now());
                             }
                         }
                     }
                     None => {
+                        app.mode = Mode::Normal;
                         app.status_message = Some("Copilot CLI not found (run: gh copilot)".into());
                         status_since = Some(Instant::now());
                     }
@@ -247,6 +253,22 @@ where
         write_terminal_progress(CLEAR_TERMINAL_PROGRESS);
     }
 
+    Ok(())
+}
+
+fn update_terminal_title<B: ratatui::backend::Backend + Write>(
+    terminal: &mut Terminal<B>,
+    app: &App,
+    last_terminal_title: &mut String,
+) -> Result<()>
+where
+    B::Error: Send + Sync + 'static,
+{
+    let title = app.terminal_title();
+    if title != *last_terminal_title {
+        execute!(terminal.backend_mut(), SetTitle(&title)).context("Failed to update title")?;
+        *last_terminal_title = title;
+    }
     Ok(())
 }
 
@@ -358,6 +380,7 @@ fn handle_key(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
     match app.mode {
         Mode::Normal => handle_normal(app, key, modifiers),
         Mode::NewSessionDir => handle_input(app, key, modifiers),
+        Mode::LaunchingNewSession => {}
         Mode::DirectoryFilter => handle_directory_filter_input(app, key, modifiers),
         Mode::Terminal => handle_terminal(app, key, modifiers),
         Mode::Help => handle_help(app, key),
