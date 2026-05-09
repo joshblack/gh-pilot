@@ -91,7 +91,7 @@ where
             PendingAction::None => {}
             PendingAction::OpenEmbedded { id, cwd } => {
                 let term_size = terminal.size()?;
-                let (rows, cols) = embedded_terminal_size(term_size, app.terminal_fullscreen);
+                let (rows, cols) = embedded_terminal_size(term_size, true);
                 match copilot_binary() {
                     Some(bin) => {
                         let cwd_arg = cwd.to_string_lossy();
@@ -108,7 +108,7 @@ where
                                 app.embedded_terminal = Some(term);
                                 app.mode = Mode::Terminal;
                                 app.active_panel = Panel::Detail;
-                                app.terminal_fullscreen = false;
+                                app.terminal_fullscreen = true;
                             }
                             Err(e) => {
                                 app.status_message = Some(format!("Failed to open: {e}"));
@@ -124,7 +124,7 @@ where
             }
             PendingAction::LaunchNew { dir } => {
                 let term_size = terminal.size()?;
-                let (rows, cols) = embedded_terminal_size(term_size, app.terminal_fullscreen);
+                let (rows, cols) = embedded_terminal_size(term_size, true);
                 match copilot_binary() {
                     Some(bin) => {
                         let dir_str = dir.to_string_lossy().to_string();
@@ -142,7 +142,7 @@ where
                                 app.embedded_terminal = Some(term);
                                 app.mode = Mode::Terminal;
                                 app.active_panel = Panel::Detail;
-                                app.terminal_fullscreen = false;
+                                app.terminal_fullscreen = true;
                             }
                             Err(e) => {
                                 app.mode = Mode::Normal;
@@ -604,5 +604,18 @@ mod tests {
         assert!(is_terminal_progress_clear(b"\x1b]9;4;0\x07"));
         assert!(is_terminal_progress_clear(b"\x1b]9;4;0;0\x07"));
         assert!(!is_terminal_progress_clear(b"\x1b]9;4;1;50\x07"));
+    }
+
+    #[test]
+    fn fullscreen_terminal_size_uses_entire_host_terminal() {
+        let (rows, cols) = embedded_terminal_size(
+            ratatui::layout::Size {
+                width: 120,
+                height: 40,
+            },
+            true,
+        );
+
+        assert_eq!((rows, cols), (40, 120));
     }
 }
