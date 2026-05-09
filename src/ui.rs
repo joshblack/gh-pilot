@@ -553,7 +553,7 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
 
     let total_lines = turn_lines.len();
     let visible_height = layout[1].height as usize;
-    clamp_scroll_position(&mut app.detail_scroll, total_lines, visible_height);
+    app.detail_scroll = clamped_scroll_position(app.detail_scroll, total_lines, visible_height);
 
     let log_title = if is_focused && session.source == SessionSource::Remote {
         " Preview [k/j scroll, o=open browser] "
@@ -1031,7 +1031,8 @@ fn draw_help_popup(f: &mut Frame, app: &mut App, area: Rect) {
     let lines = help_lines();
     let total_lines = lines.len();
     let visible_height = inner.height as usize;
-    let help_scroll = clamp_scroll_position(&mut app.help_scroll, total_lines, visible_height);
+    app.help_scroll = clamped_scroll_position(app.help_scroll, total_lines, visible_height);
+    let help_scroll = app.help_scroll;
 
     let help = Paragraph::new(Text::from(lines))
         .style(Style::default().bg(SURFACE_COLOR))
@@ -1139,10 +1140,9 @@ fn centered_rect(percent_x: u16, height: u16, area: Rect) -> Rect {
     Rect::new(x, y, w, h)
 }
 
-fn clamp_scroll_position(scroll: &mut usize, total_lines: usize, visible_height: usize) -> usize {
+fn clamped_scroll_position(scroll: usize, total_lines: usize, visible_height: usize) -> usize {
     let max_scroll = total_lines.saturating_sub(visible_height);
-    *scroll = (*scroll).min(max_scroll);
-    *scroll
+    scroll.min(max_scroll)
 }
 
 fn short_path(path: &str) -> String {
@@ -1183,12 +1183,9 @@ mod tests {
     }
 
     #[test]
-    fn clamp_scroll_position_bounds_overscrolled_state() {
-        let mut scroll = 20;
-
-        let clamped = clamp_scroll_position(&mut scroll, 10, 4);
+    fn clamped_scroll_position_bounds_overscrolled_state() {
+        let clamped = clamped_scroll_position(20, 10, 4);
 
         assert_eq!(clamped, 6);
-        assert_eq!(scroll, 6);
     }
 }
