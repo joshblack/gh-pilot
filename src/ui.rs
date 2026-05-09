@@ -553,10 +553,7 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
 
     let total_lines = turn_lines.len();
     let visible_height = layout[1].height as usize;
-    let max_scroll = total_lines.saturating_sub(visible_height);
-    if app.detail_scroll > max_scroll {
-        app.detail_scroll = max_scroll;
-    }
+    clamp_scroll_position(&mut app.detail_scroll, total_lines, visible_height);
 
     let log_title = if is_focused && session.source == SessionSource::Remote {
         " Preview [k/j scroll, o=open browser] "
@@ -1034,8 +1031,7 @@ fn draw_help_popup(f: &mut Frame, app: &App, area: Rect) {
     let lines = help_lines();
     let total_lines = lines.len();
     let visible_height = inner.height as usize;
-    let max_scroll = total_lines.saturating_sub(visible_height);
-    let help_scroll = app.help_scroll.min(max_scroll);
+    let help_scroll = clamp_scroll_position(&mut app.help_scroll, total_lines, visible_height);
 
     let help = Paragraph::new(Text::from(lines))
         .style(Style::default().bg(SURFACE_COLOR))
@@ -1143,6 +1139,12 @@ fn centered_rect(percent_x: u16, height: u16, area: Rect) -> Rect {
     Rect::new(x, y, w, h)
 }
 
+fn clamp_scroll_position(scroll: &mut usize, total_lines: usize, visible_height: usize) -> usize {
+    let max_scroll = total_lines.saturating_sub(visible_height);
+    *scroll = (*scroll).min(max_scroll);
+    *scroll
+}
+
 fn short_path(path: &str) -> String {
     if let Some(home) = dirs::home_dir() {
         let home_str = home.to_string_lossy().to_string();
@@ -1178,5 +1180,15 @@ mod tests {
             split_list_marker("1.\u{2003}item"),
             Some(("1.\u{2003}", "item"))
         );
+    }
+
+    #[test]
+    fn clamp_scroll_position_bounds_overscrolled_state() {
+        let mut scroll = 20;
+
+        let clamped = clamp_scroll_position(&mut scroll, 10, 4);
+
+        assert_eq!(clamped, 6);
+        assert_eq!(scroll, 6);
     }
 }
