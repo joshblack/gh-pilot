@@ -5,6 +5,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+const REMOTE_AGENT_GROUP: &str = "Remote agent tasks";
+
 // ── Status ──────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq)]
@@ -91,7 +93,7 @@ impl CopilotSession {
             return self
                 .repository
                 .clone()
-                .unwrap_or_else(|| "Remote agent tasks".to_string());
+                .unwrap_or_else(|| REMOTE_AGENT_GROUP.to_string());
         }
         self.cwd.to_string_lossy().to_string()
     }
@@ -255,7 +257,7 @@ fn remote_task_from_json(task: serde_json::Value) -> Option<CopilotSession> {
         cwd: repository
             .as_deref()
             .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("Remote agent tasks")),
+            .unwrap_or_else(|| PathBuf::from(REMOTE_AGENT_GROUP)),
         git_root: None,
         repository,
         branch: None,
