@@ -177,7 +177,8 @@ impl App {
             .collect();
         self.notified_waiting_sessions
             .retain(|id| session_ids.contains(id.as_str()));
-        self.flat_list = build_flat_list(&self.sessions, self.session_filter, &self.directory_filter);
+        self.flat_list =
+            build_flat_list(&self.sessions, self.session_filter, &self.directory_filter);
 
         if let Some(id) = cursor_id {
             if let Some(pos) = self
@@ -422,8 +423,11 @@ impl App {
     }
 
     fn apply_session_filters(&mut self) {
-        let selected_id = self.selected_session.map(|idx| self.sessions[idx].id.clone());
-        self.flat_list = build_flat_list(&self.sessions, self.session_filter, &self.directory_filter);
+        let selected_id = self
+            .selected_session
+            .map(|idx| self.sessions[idx].id.clone());
+        self.flat_list =
+            build_flat_list(&self.sessions, self.session_filter, &self.directory_filter);
 
         self.cursor = selected_id
             .and_then(|id| {
@@ -449,8 +453,7 @@ fn build_flat_list(
 ) -> Vec<usize> {
     let mut flat = Vec::new();
 
-    for idx in 0..sessions.len() {
-        let session = &sessions[idx];
+    for (idx, session) in sessions.iter().enumerate() {
         if matches_directory_filter(session, directory_filter)
             && matches_session_filter(session, session_filter)
         {
@@ -461,7 +464,10 @@ fn build_flat_list(
     flat
 }
 
-fn count_session_filters(sessions: &[CopilotSession], directory_filter: &str) -> SessionFilterCounts {
+fn count_session_filters(
+    sessions: &[CopilotSession],
+    directory_filter: &str,
+) -> SessionFilterCounts {
     sessions
         .iter()
         .filter(|session| matches_directory_filter(session, directory_filter))

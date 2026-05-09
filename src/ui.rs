@@ -130,10 +130,7 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
             "No sessions match the active filters."
         };
         let msg = Paragraph::new(Text::from(vec![
-            Line::from(Span::styled(
-                title,
-                Style::default().fg(MUTED_COLOR),
-            )),
+            Line::from(Span::styled(title, Style::default().fg(MUTED_COLOR))),
             Line::from(Span::raw("")),
             Line::from(Span::styled(
                 "Press [/] to edit directory filters or [Tab] to switch status.",
@@ -926,8 +923,7 @@ fn footer_shortcuts(app: &App) -> Vec<(&'static str, &'static str)> {
             shortcuts
         }
         Panel::Detail => {
-            let mut shortcuts =
-                vec![("Scroll", "j/k"), ("Back", "h/Esc"), ("Filter", "Tab or /")];
+            let mut shortcuts = vec![("Scroll", "j/k"), ("Back", "h/Esc"), ("Filter", "Tab or /")];
             if app.selected_session.is_some() {
                 shortcuts.push(("Open", "o"));
             }
