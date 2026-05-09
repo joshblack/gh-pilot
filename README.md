@@ -78,8 +78,6 @@ cargo build --release
 | `Enter` / `Space` | View the selected session |
 | `o` | Open or resume the selected local session in Copilot |
 | `n` | Start a new Copilot session |
-| `/` | Filter sessions by directory |
-| `Ctrl+U` | Clear the directory filter |
 | `r` | Reload sessions from disk |
 | `?` | Show or hide shortcut help |
 | `q` | Quit from normal mode |
@@ -93,11 +91,9 @@ When an embedded Copilot terminal is open:
 | `Ctrl+W` | Detach from the embedded session |
 | Mouse input | Forwarded to Copilot while fullscreen |
 
-When starting a new session, the prompt is pre-filled with the current directory
-filter when one is active, then the selected session's directory, and otherwise
-the directory where `gh pilot` was started. Press `Tab` or `Shift+Tab` in the new
-session or directory filter prompt to cycle through previous filters and local
-session directories.
+When starting a new session, the prompt is pre-filled with the current session's
+directory when one is selected. Otherwise it uses the directory where
+`gh pilot` was started.
 
 ## Data sources
 
