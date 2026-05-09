@@ -595,7 +595,16 @@ fn path_matches_filter(path: &Path, filter: &str) -> bool {
 
 fn repository_matches_filter(repository: &str, filter: &str) -> bool {
     let repository = normalize_filter_text(repository);
-    repository.contains(filter) || filter.contains(&repository)
+    repository.contains(filter) || filter_contains_repository_path(filter, &repository)
+}
+
+fn filter_contains_repository_path(filter: &str, repository: &str) -> bool {
+    if !repository.contains('/') {
+        return false;
+    }
+
+    let repository_path = format!("/{repository}");
+    filter.ends_with(&repository_path) || filter.contains(&format!("{repository_path}/"))
 }
 
 fn directory_filter_candidates(directory_filter: &str) -> Vec<String> {
@@ -604,10 +613,14 @@ fn directory_filter_candidates(directory_filter: &str) -> Vec<String> {
         return Vec::new();
     }
 
-    let mut candidates = vec![normalize_filter_text(filter)];
+    let mut candidates = Vec::new();
+    let normalized = normalize_filter_text(filter);
+    if !normalized.is_empty() {
+        candidates.push(normalized);
+    }
     if let Some(expanded) = expand_home_directory_filter(filter) {
         let expanded = normalize_filter_text(&expanded.to_string_lossy());
-        if !candidates.contains(&expanded) {
+        if !expanded.is_empty() && !candidates.contains(&expanded) {
             candidates.push(expanded);
         }
     }
@@ -626,15 +639,10 @@ fn expand_home_directory_filter(filter: &str) -> Option<PathBuf> {
 }
 
 fn normalize_filter_text(value: &str) -> String {
-    let normalized = value
+    value
         .replace('\\', "/")
         .trim_end_matches('/')
-        .to_ascii_lowercase();
-    if normalized.is_empty() {
-        value.to_ascii_lowercase()
-    } else {
-        normalized
-    }
+        .to_ascii_lowercase()
 }
 
 fn is_remote_session(session: &CopilotSession) -> bool {
@@ -833,6 +841,20 @@ mod tests {
             ),
             vec![0]
         );
+    }
+
+    #[test]
+    fn directory_filter_does_not_match_partial_repository_path() {
+        let sessions = vec![session_with_details(
+            "remote",
+            SessionSource::Remote,
+            "owner/react",
+            SessionStatus::Idle,
+            None,
+            Some("owner/react"),
+        )];
+
+        assert!(build_flat_list(&sessions, SessionFilter::Remote, "/tmp/react/src").is_empty());
     }
 
     #[test]
