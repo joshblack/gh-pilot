@@ -8,7 +8,7 @@ use std::sync::{
     Arc, Mutex, MutexGuard,
 };
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Keep generated tmux session names compact and safely below common terminal UI limits.
 const TMUX_SESSION_NAME_MAX_LEN: usize = 80;
@@ -27,6 +27,8 @@ pub struct EmbeddedTerminal {
     pub session_id: String,
     /// tmux session that owns the Copilot CLI process.
     tmux_session: String,
+    /// Cached title reported by tmux for the Copilot pane.
+    tmux_title: Mutex<CachedTmuxTitle>,
     /// Current PTY dimensions.
     pub rows: u16,
     pub cols: u16,
@@ -155,6 +157,7 @@ impl EmbeddedTerminal {
             child_exited,
             session_id,
             tmux_session,
+            tmux_title: Mutex::new(CachedTmuxTitle::default()),
             rows,
             cols,
             _master: master,
@@ -195,7 +198,26 @@ impl EmbeddedTerminal {
     }
 
     pub fn terminal_title(&self) -> Option<String> {
-        self.parser().callbacks().window_title.clone()
+        self.tmux_terminal_title()
+            .or_else(|| self.parser().callbacks().window_title.clone())
+    }
+
+    fn tmux_terminal_title(&self) -> Option<String> {
+        let mut cache = self
+            .tmux_title
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if cache
+            .last_checked
+            .map(|last_checked| last_checked.elapsed() < Duration::from_millis(250))
+            .unwrap_or(false)
+        {
+            return cache.value.clone();
+        }
+
+        cache.last_checked = Some(Instant::now());
+        cache.value = tmux_pane_title(&self.tmux_session);
+        cache.value.clone()
     }
 
     /// Rename the backing tmux session to the deterministic name for `session_id`.
@@ -244,6 +266,12 @@ pub(crate) struct TerminalCallbacks {
     window_title: Option<String>,
 }
 
+#[derive(Default)]
+struct CachedTmuxTitle {
+    last_checked: Option<Instant>,
+    value: Option<String>,
+}
+
 impl vt100::Callbacks for TerminalCallbacks {
     fn set_window_title(&mut self, _: &mut vt100::Screen, title: &[u8]) {
         self.window_title = Some(String::from_utf8_lossy(title).to_string());
@@ -260,6 +288,27 @@ fn tmux_has_session(tmux_session: &str) -> bool {
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
+}
+
+fn tmux_pane_title(tmux_session: &str) -> Option<String> {
+    let output = Command::new("tmux")
+        .arg("display-message")
+        .arg("-p")
+        .arg("-t")
+        .arg(tmux_session)
+        .arg("#{pane_title}")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    title_from_tmux_output(&output.stdout)
+}
+
+fn title_from_tmux_output(output: &[u8]) -> Option<String> {
+    let title = String::from_utf8_lossy(output).trim().to_string();
+    (!title.is_empty()).then_some(title)
 }
 
 pub(crate) fn tmux_session_name(session_id: &str) -> String {
@@ -403,5 +452,14 @@ mod tests {
             parser.callbacks().window_title.as_deref(),
             Some("Current Copilot session")
         );
+    }
+
+    #[test]
+    fn tmux_title_output_is_trimmed_and_ignores_empty_titles() {
+        assert_eq!(
+            title_from_tmux_output(b"Updated Copilot Title\n").as_deref(),
+            Some("Updated Copilot Title")
+        );
+        assert_eq!(title_from_tmux_output(b" \n"), None);
     }
 }
