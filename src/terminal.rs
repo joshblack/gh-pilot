@@ -13,11 +13,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Keep generated tmux session names compact and safely below common terminal UI limits.
 const TMUX_SESSION_NAME_MAX_LEN: usize = 80;
 pub(crate) const TMUX_SESSION_PREFIX: &str = "ghpilot_";
+pub(crate) type TerminalParser = vt100::Parser<TerminalCallbacks>;
 
 /// An embedded copilot terminal session running inside the right detail panel.
 pub struct EmbeddedTerminal {
     /// Shared vt100 screen state updated by the background reader thread.
-    pub parser: Arc<Mutex<vt100::Parser>>,
+    parser: Arc<Mutex<TerminalParser>>,
     /// Write bytes (keyboard input) into the PTY master.
     writer: Mutex<Box<dyn std::io::Write + Send>>,
     /// Set to `true` by the reader thread when the child process exits.
@@ -118,7 +119,12 @@ impl EmbeddedTerminal {
         let writer = master.take_writer()?;
         let reader = master.try_clone_reader()?;
 
-        let parser = Arc::new(Mutex::new(vt100::Parser::new(rows, cols, 1000)));
+        let parser = Arc::new(Mutex::new(vt100::Parser::new_with_callbacks(
+            rows,
+            cols,
+            1000,
+            TerminalCallbacks::default(),
+        )));
         let child_exited = Arc::new(AtomicBool::new(false));
 
         // Background reader: feeds raw PTY bytes into the vt100 parser.
@@ -184,8 +190,12 @@ impl EmbeddedTerminal {
         self.cols = cols;
     }
 
-    pub fn parser(&self) -> MutexGuard<'_, vt100::Parser> {
+    pub(crate) fn parser(&self) -> MutexGuard<'_, TerminalParser> {
         lock_parser(&self.parser)
+    }
+
+    pub fn terminal_title(&self) -> Option<String> {
+        self.parser().callbacks().window_title.clone()
     }
 
     /// Rename the backing tmux session to the deterministic name for `session_id`.
@@ -223,10 +233,21 @@ impl EmbeddedTerminal {
     }
 }
 
-fn lock_parser(parser: &Mutex<vt100::Parser>) -> MutexGuard<'_, vt100::Parser> {
+fn lock_parser(parser: &Mutex<TerminalParser>) -> MutexGuard<'_, TerminalParser> {
     parser
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[derive(Default)]
+pub(crate) struct TerminalCallbacks {
+    window_title: Option<String>,
+}
+
+impl vt100::Callbacks for TerminalCallbacks {
+    fn set_window_title(&mut self, _: &mut vt100::Screen, title: &[u8]) {
+        self.window_title = Some(String::from_utf8_lossy(title).to_string());
+    }
 }
 
 fn tmux_has_session(tmux_session: &str) -> bool {
@@ -354,4 +375,33 @@ pub fn mouse_to_bytes(event: MouseEvent) -> Vec<u8> {
         event.row.saturating_add(1)
     )
     .into_bytes()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parser_captures_window_title_from_osc_2() {
+        let mut parser = vt100::Parser::new_with_callbacks(24, 80, 0, TerminalCallbacks::default());
+
+        parser.process(b"\x1b]2;Fix title from Copilot CLI\x07");
+
+        assert_eq!(
+            parser.callbacks().window_title.as_deref(),
+            Some("Fix title from Copilot CLI")
+        );
+    }
+
+    #[test]
+    fn parser_captures_window_title_from_osc_0() {
+        let mut parser = vt100::Parser::new_with_callbacks(24, 80, 0, TerminalCallbacks::default());
+
+        parser.process(b"\x1b]0;Current Copilot session\x07");
+
+        assert_eq!(
+            parser.callbacks().window_title.as_deref(),
+            Some("Current Copilot session")
+        );
+    }
 }

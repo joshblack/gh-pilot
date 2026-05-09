@@ -688,6 +688,12 @@ impl App {
 
     fn current_session_title(&self) -> Option<String> {
         if let Some(terminal) = &self.embedded_terminal {
+            if let Some(title) = terminal
+                .terminal_title()
+                .filter(|title| !title.trim().is_empty())
+            {
+                return Some(title);
+            }
             if let Some(session) = self
                 .sessions
                 .iter()
