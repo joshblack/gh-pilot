@@ -1,0 +1,92 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG_NAME already exists"
+            exit 0
+          fi
+
+          args=()
+          if [[ "$TAG_NAME" == *-* ]]; then
+            args+=(--prerelease)
+          fi
+
+          gh release create "$TAG_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TAG_NAME" \
+            --generate-notes \
+            "${args[@]}"
+
+  build:
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            asset_suffix: linux-amd64
+            binary_name: gh-mission-control
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            asset_suffix: linux-arm64
+            binary_name: gh-mission-control
+          - os: macos-13
+            target: x86_64-apple-darwin
+            asset_suffix: darwin-amd64
+            binary_name: gh-mission-control
+          - os: macos-14
+            target: aarch64-apple-darwin
+            asset_suffix: darwin-arm64
+            binary_name: gh-mission-control
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset_suffix: windows-amd64.exe
+            binary_name: gh-mission-control.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2.9.1
+
+      - name: Install Rust target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Build release binary
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Stage extension binary
+        shell: bash
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+          ASSET_SUFFIX: ${{ matrix.asset_suffix }}
+          BINARY_NAME: ${{ matrix.binary_name }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          mkdir -p dist
+          cp "target/$TARGET/release/$BINARY_NAME" "dist/gh-mission-control_${TAG_NAME}_${ASSET_SUFFIX}"
+
+      - name: Upload extension binary
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: gh release upload "$TAG_NAME" dist/* --repo "$GITHUB_REPOSITORY" --clobber

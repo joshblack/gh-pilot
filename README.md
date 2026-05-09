@@ -38,6 +38,10 @@ Install as a `gh` extension:
 gh extension install joshblack/gh-mission-control
 ```
 
+`gh extension install` downloads the prebuilt binary from the latest GitHub
+Release for your platform. Releases are published automatically when a `v*` tag
+is pushed.
+
 Start the UI:
 
 ```sh
