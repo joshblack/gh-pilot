@@ -373,10 +373,7 @@ fn update_palette_from_osc(palette: &mut TerminalPalette, params: &[&[u8]]) {
         [b"111"] => palette.default_bg = None,
         [b"4", colors @ ..] => {
             for pair in colors.chunks_exact(2) {
-                let Ok(index) = std::str::from_utf8(pair[0])
-                    .unwrap_or_default()
-                    .parse::<u8>()
-                else {
+                let Some(index) = parse_u8(pair[0]) else {
                     continue;
                 };
                 let Some(color) = parse_osc_color(pair[1]) else {
@@ -388,13 +385,17 @@ fn update_palette_from_osc(palette: &mut TerminalPalette, params: &[&[u8]]) {
         [b"104"] => palette.indexed.clear(),
         [b"104", indices @ ..] => {
             for index in indices {
-                if let Ok(index) = std::str::from_utf8(index).unwrap_or_default().parse::<u8>() {
+                if let Some(index) = parse_u8(index) {
                     palette.reset_indexed_color(index);
                 }
             }
         }
         _ => {}
     }
+}
+
+fn parse_u8(value: &[u8]) -> Option<u8> {
+    std::str::from_utf8(value).ok()?.parse().ok()
 }
 
 fn parse_osc_color(color: &[u8]) -> Option<vt100::Color> {
