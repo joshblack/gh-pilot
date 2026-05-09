@@ -5,7 +5,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
+    Arc, Mutex, MutexGuard,
 };
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -135,7 +135,7 @@ impl EmbeddedTerminal {
                         break;
                     }
                     Ok(n) => {
-                        parser_clone.lock().unwrap().process(&buf[..n]);
+                        lock_parser(&parser_clone).process(&buf[..n]);
                     }
                 }
             }
@@ -179,11 +179,13 @@ impl EmbeddedTerminal {
             pixel_height: 0,
         };
         let _ = self._master.resize(size);
-        if let Ok(mut parser) = self.parser.lock() {
-            parser.screen_mut().set_size(rows, cols);
-        }
+        self.parser().screen_mut().set_size(rows, cols);
         self.rows = rows;
         self.cols = cols;
+    }
+
+    pub fn parser(&self) -> MutexGuard<'_, vt100::Parser> {
+        lock_parser(&self.parser)
     }
 
     /// Rename the backing tmux session to the deterministic name for `session_id`.
@@ -219,6 +221,12 @@ impl EmbeddedTerminal {
 
         Ok(())
     }
+}
+
+fn lock_parser(parser: &Mutex<vt100::Parser>) -> MutexGuard<'_, vt100::Parser> {
+    parser
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn tmux_has_session(tmux_session: &str) -> bool {

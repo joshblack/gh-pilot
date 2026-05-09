@@ -1,8 +1,8 @@
 use crate::terminal::{tmux_session_name, TMUX_SESSION_PREFIX};
 use chrono::{DateTime, Duration, Utc};
-use std::collections::HashSet;
-use std::fs;
-use std::io::{self, BufRead, BufReader, Read};
+use std::collections::{HashMap, HashSet};
+use std::fs::{self, File};
+use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -176,8 +176,32 @@ pub fn load_sessions(copilot_dir: &Path) -> Vec<CopilotSession> {
     sessions
 }
 
-/// Refresh status for already-loaded sessions using active gh-pilot tmux sessions.
-pub fn refresh_session_statuses(copilot_dir: &Path, sessions: &mut [CopilotSession]) {
+/// Incremental status-polling state for append-only Copilot event logs.
+#[derive(Debug, Default)]
+pub struct SessionStatusCache {
+    event_logs: HashMap<String, EventLogCursor>,
+}
+
+impl SessionStatusCache {
+    pub fn retain_sessions(&mut self, session_ids: &HashSet<&str>) {
+        self.event_logs
+            .retain(|session_id, _| session_ids.contains(session_id.as_str()));
+    }
+
+    fn status_from_events(&mut self, session_id: &str, path: &Path) -> Option<SessionStatus> {
+        self.event_logs
+            .entry(session_id.to_string())
+            .or_default()
+            .status_from_path(path)
+    }
+}
+
+/// Refresh status for already-loaded sessions, reusing append-only event-log cursors.
+pub fn refresh_session_statuses_with_cache(
+    copilot_dir: &Path,
+    sessions: &mut [CopilotSession],
+    cache: &mut SessionStatusCache,
+) {
     let db_path = session_db_path(copilot_dir);
     let active_tmux_sessions = active_tmux_session_names();
 
@@ -185,8 +209,13 @@ pub fn refresh_session_statuses(copilot_dir: &Path, sessions: &mut [CopilotSessi
         if session.source == SessionSource::Remote {
             continue;
         }
-        session.status =
-            detect_session_status(copilot_dir, &db_path, &session.id, &active_tmux_sessions);
+        session.status = detect_session_status_with_cache(
+            copilot_dir,
+            &db_path,
+            &session.id,
+            &active_tmux_sessions,
+            cache,
+        );
     }
 }
 
@@ -618,15 +647,43 @@ fn detect_session_status(
     session_id: &str,
     active_tmux_sessions: &HashSet<String>,
 ) -> SessionStatus {
+    detect_session_status_inner(copilot_dir, db_path, session_id, active_tmux_sessions, None)
+}
+
+fn detect_session_status_with_cache(
+    copilot_dir: &Path,
+    db_path: &Path,
+    session_id: &str,
+    active_tmux_sessions: &HashSet<String>,
+    cache: &mut SessionStatusCache,
+) -> SessionStatus {
+    detect_session_status_inner(
+        copilot_dir,
+        db_path,
+        session_id,
+        active_tmux_sessions,
+        Some(cache),
+    )
+}
+
+fn detect_session_status_inner(
+    copilot_dir: &Path,
+    db_path: &Path,
+    session_id: &str,
+    active_tmux_sessions: &HashSet<String>,
+    cache: Option<&mut SessionStatusCache>,
+) -> SessionStatus {
     if !active_tmux_sessions.contains(&tmux_session_name(session_id)) {
         return SessionStatus::Idle;
     }
 
     // The event stream records turn starts, permission prompts, and turn ends as
     // they happen, so it reflects live agent state before the summary DB catches up.
-    if let Some(status) =
-        detect_session_status_from_events(&event_log_path(copilot_dir, session_id))
-    {
+    let event_log = event_log_path(copilot_dir, session_id);
+    let event_status = cache
+        .map(|cache| cache.status_from_events(session_id, &event_log))
+        .unwrap_or_else(|| detect_session_status_from_events(&event_log));
+    if let Some(status) = event_status {
         return status;
     }
 
@@ -654,45 +711,107 @@ fn detect_session_status_from_events(path: &Path) -> Option<SessionStatus> {
 }
 
 fn detect_session_status_from_event_content(content: &str) -> Option<SessionStatus> {
-    let mut saw_event = false;
-    let mut active_turn: Option<String> = None;
-    let mut pending_permissions = HashSet::new();
-    let mut saw_error = false;
+    let mut state = EventStatusState::default();
+    state.process_content(content);
+    state.status()
+}
 
-    for line in content.lines() {
+#[derive(Debug, Default)]
+struct EventLogCursor {
+    offset: u64,
+    pending_line: Vec<u8>,
+    state: EventStatusState,
+}
+
+impl EventLogCursor {
+    fn status_from_path(&mut self, path: &Path) -> Option<SessionStatus> {
+        let mut file = File::open(path).ok()?;
+        let len = file.metadata().ok()?.len();
+
+        if len < self.offset {
+            self.reset();
+        }
+
+        let start_offset = self.offset;
+        file.seek(SeekFrom::Start(start_offset)).ok()?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).ok()?;
+        self.offset = start_offset + bytes.len() as u64;
+
+        if bytes.is_empty() {
+            return self.state.status();
+        }
+
+        let mut chunk = std::mem::take(&mut self.pending_line);
+        chunk.extend_from_slice(&bytes);
+
+        let Some(last_newline) = chunk.iter().rposition(|byte| *byte == b'\n') else {
+            self.pending_line = chunk;
+            return self.state.status();
+        };
+
+        self.pending_line = chunk.split_off(last_newline + 1);
+        let content = String::from_utf8_lossy(&chunk);
+        self.state.process_content(&content);
+        self.state.status()
+    }
+
+    fn reset(&mut self) {
+        self.offset = 0;
+        self.pending_line.clear();
+        self.state = EventStatusState::default();
+    }
+}
+
+#[derive(Debug, Default)]
+struct EventStatusState {
+    saw_event: bool,
+    active_turn: Option<String>,
+    pending_permissions: HashSet<String>,
+    saw_error: bool,
+}
+
+impl EventStatusState {
+    fn process_content(&mut self, content: &str) {
+        for line in content.lines() {
+            self.process_line(line);
+        }
+    }
+
+    fn process_line(&mut self, line: &str) {
         let Ok(event) = serde_json::from_str::<serde_json::Value>(line) else {
-            continue;
+            return;
         };
         let Some(event_type) = event.get("type").and_then(|value| value.as_str()) else {
-            continue;
+            return;
         };
-        saw_event = true;
+        self.saw_event = true;
 
         let data = event.get("data");
         match event_type {
             "assistant.turn_start" => {
-                active_turn = data
+                self.active_turn = data
                     .and_then(|data| data.get("turnId"))
                     .and_then(|value| value.as_str())
                     .map(ToString::to_string);
-                pending_permissions.clear();
-                saw_error = false;
+                self.pending_permissions.clear();
+                self.saw_error = false;
             }
             "assistant.turn_end"
-                if active_turn.as_deref()
+                if self.active_turn.as_deref()
                     == data
                         .and_then(|data| data.get("turnId"))
                         .and_then(|value| value.as_str()) =>
             {
-                active_turn = None;
-                pending_permissions.clear();
+                self.active_turn = None;
+                self.pending_permissions.clear();
             }
             "permission.requested" => {
                 if let Some(request_id) = data
                     .and_then(|data| data.get("requestId"))
                     .and_then(|value| value.as_str())
                 {
-                    pending_permissions.insert(request_id.to_string());
+                    self.pending_permissions.insert(request_id.to_string());
                 }
             }
             "permission.completed" => {
@@ -700,7 +819,7 @@ fn detect_session_status_from_event_content(content: &str) -> Option<SessionStat
                     .and_then(|data| data.get("requestId"))
                     .and_then(|value| value.as_str())
                 {
-                    pending_permissions.remove(request_id);
+                    self.pending_permissions.remove(request_id);
                 }
             }
             "tool.execution_complete"
@@ -709,28 +828,30 @@ fn detect_session_status_from_event_content(content: &str) -> Option<SessionStat
                     .and_then(|value| value.as_bool())
                     .is_some_and(|success| !success) =>
             {
-                saw_error = true;
+                self.saw_error = true;
             }
             _ if event_type.ends_with(".error") => {
-                saw_error = true;
+                self.saw_error = true;
             }
             _ => {}
         }
     }
 
-    if !saw_event {
-        return None;
+    fn status(&self) -> Option<SessionStatus> {
+        if !self.saw_event {
+            return None;
+        }
+        if self.saw_error {
+            return Some(SessionStatus::Error);
+        }
+        if !self.pending_permissions.is_empty() {
+            return Some(SessionStatus::Waiting);
+        }
+        if self.active_turn.is_some() {
+            return Some(SessionStatus::Running);
+        }
+        Some(SessionStatus::Waiting)
     }
-    if saw_error {
-        return Some(SessionStatus::Error);
-    }
-    if !pending_permissions.is_empty() {
-        return Some(SessionStatus::Waiting);
-    }
-    if active_turn.is_some() {
-        return Some(SessionStatus::Running);
-    }
-    Some(SessionStatus::Waiting)
 }
 
 fn load_latest_turn_from_db(
@@ -793,6 +914,7 @@ fn active_tmux_session_names() -> HashSet<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -936,6 +1058,62 @@ mod tests {
             detect_session_status_from_event_content(content),
             Some(SessionStatus::Waiting)
         );
+    }
+
+    #[test]
+    fn event_log_cursor_reads_appended_events_incrementally() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("ghmc-event-cursor-test-{unique}"));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("events.jsonl");
+
+        fs::write(
+            &path,
+            "{\"type\":\"assistant.turn_start\",\"data\":{\"turnId\":\"1\"}}\n",
+        )
+        .unwrap();
+
+        let mut cursor = EventLogCursor::default();
+        assert_eq!(cursor.status_from_path(&path), Some(SessionStatus::Running));
+
+        let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+        file.write_all(
+            b"{\"type\":\"permission.requested\",\"data\":{\"requestId\":\"approve-1\"}}\n",
+        )
+        .unwrap();
+
+        assert_eq!(cursor.status_from_path(&path), Some(SessionStatus::Waiting));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn event_log_cursor_defers_partial_final_lines() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("ghmc-event-partial-test-{unique}"));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("events.jsonl");
+
+        fs::write(
+            &path,
+            "{\"type\":\"assistant.turn_start\",\"data\":{\"turnId\":\"1\"}}\n\
+             {\"type\":\"assistant.turn_end\"",
+        )
+        .unwrap();
+
+        let mut cursor = EventLogCursor::default();
+        assert_eq!(cursor.status_from_path(&path), Some(SessionStatus::Running));
+
+        let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+        file.write_all(b",\"data\":{\"turnId\":\"1\"}}\n").unwrap();
+
+        assert_eq!(cursor.status_from_path(&path), Some(SessionStatus::Waiting));
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

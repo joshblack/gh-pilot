@@ -938,7 +938,7 @@ fn draw_embedded_terminal(f: &mut Frame, term: &crate::terminal::EmbeddedTermina
 }
 
 fn render_vt100_screen(f: &mut Frame, term: &crate::terminal::EmbeddedTerminal, area: Rect) {
-    let parser = term.parser.lock().unwrap();
+    let parser = term.parser();
     let screen = parser.screen();
 
     let rows = area.height as usize;

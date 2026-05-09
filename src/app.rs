@@ -1,6 +1,6 @@
 use crate::session::{
-    load_remote_task_log, load_sessions, refresh_session_statuses, CopilotSession, SessionSource,
-    SessionStatus,
+    load_remote_task_log, load_sessions, refresh_session_statuses_with_cache, CopilotSession,
+    SessionSource, SessionStatus, SessionStatusCache,
 };
 use crate::terminal::EmbeddedTerminal;
 use std::collections::HashSet;
@@ -113,6 +113,7 @@ pub struct App {
     /// Session IDs present before launching a new Copilot session.
     pub new_session_reload_baseline: Option<HashSet<String>>,
     notified_waiting_sessions: HashSet<String>,
+    status_cache: SessionStatusCache,
     /// A live copilot session embedded in the right panel, if any.
     pub embedded_terminal: Option<EmbeddedTerminal>,
     /// Whether the embedded terminal is taking the full TUI area.
@@ -153,6 +154,7 @@ impl App {
             pending_action: PendingAction::None,
             new_session_reload_baseline: None,
             notified_waiting_sessions: HashSet::new(),
+            status_cache: SessionStatusCache::default(),
             embedded_terminal: None,
             terminal_fullscreen: false,
             remote_log_sender,
@@ -166,7 +168,11 @@ impl App {
     }
 
     pub fn refresh_statuses(&mut self) -> bool {
-        refresh_session_statuses(&self.copilot_dir, &mut self.sessions);
+        refresh_session_statuses_with_cache(
+            &self.copilot_dir,
+            &mut self.sessions,
+            &mut self.status_cache,
+        );
         self.take_waiting_notification()
     }
 
@@ -204,6 +210,7 @@ impl App {
             .collect();
         self.notified_waiting_sessions
             .retain(|id| session_ids.contains(id.as_str()));
+        self.status_cache.retain_sessions(&session_ids);
         self.flat_list =
             build_flat_list(&self.sessions, self.session_filter, &self.directory_filter);
 
@@ -454,6 +461,7 @@ impl App {
         self.embedded_terminal = None;
         self.mode = Mode::Normal;
         self.terminal_fullscreen = false;
+        self.status_message = Some("Detached; Copilot continues in tmux".into());
     }
 
     pub fn toggle_terminal_fullscreen(&mut self) {
@@ -677,6 +685,7 @@ mod tests {
             pending_action: PendingAction::None,
             new_session_reload_baseline: None,
             notified_waiting_sessions: HashSet::new(),
+            status_cache: SessionStatusCache::default(),
             embedded_terminal: None,
             terminal_fullscreen: false,
             remote_log_sender,

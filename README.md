@@ -17,6 +17,18 @@ tasks, and lets you open or start Copilot sessions without leaving the UI.
 - Lists remote agent tasks from `gh agent-task list` when that command is
   available
 
+- **Reads real Copilot CLI sessions** from `~/.copilot/session-state/` — no extra configuration
+- **Split-pane TUI** — sessions list on the left, session detail/conversation on the right
+- **Sessions grouped by working directory** and sorted newest-first
+- **Smart status polling** with Running (`●` green), Waiting (`◐` yellow), Idle (`○` gray), and Error (`✕` red) indicators
+- **Conversation history** — view user messages and Copilot responses in the detail pane
+- **Vim-style navigation** — `j`/`k` to move, `Enter`/`Space` to view detail
+- **Launch new sessions** — `n` to start `copilot -C <dir>` with the current directory pre-filled
+- **Resume sessions** — `o` to resume any existing session with `copilot --resume=<id>`
+- **Embedded Copilot terminal** — resumed and newly launched sessions run in tmux-backed panes
+- **Reload** — `r` to refresh from disk at any time
+- **Shortcut help** — `?` shows a scrollable shortcut reference
+
 Remote agent tasks are shown for visibility, but they cannot be opened in the
 local embedded terminal.
 
@@ -93,3 +105,13 @@ directory when one is selected. Otherwise it uses the directory where
 - `gh agent-task list --json ...` for remote agent tasks
 
 Local sessions are shown when they have been active within the last seven days.
+
+### Embedded terminal
+
+| Key | Action |
+|-----|--------|
+| `Ctrl+F` | Toggle fullscreen |
+| `Ctrl+W` | Detach from the embedded terminal |
+| Other keys | Forward input to Copilot |
+
+Embedded terminals are tmux clients. Detaching closes only the in-app terminal view; the backing Copilot process keeps running in its tmux session so it can be resumed later.
