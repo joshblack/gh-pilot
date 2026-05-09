@@ -144,7 +144,7 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
             "No sessions match the active filters."
         };
         let description = if app.is_loading_sessions() {
-            "Reading local sessions and remote agent tasks."
+            "Reading local sessions and Remote agent tasks."
         } else {
             "No sessions match the current filters."
         };

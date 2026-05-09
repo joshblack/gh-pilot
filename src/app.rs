@@ -179,7 +179,7 @@ impl App {
         let sender = self.session_load_sender.clone();
         std::thread::spawn(move || {
             let sessions = load_sessions(&copilot_dir);
-            drop(sender.send((generation, sessions)));
+            let _ = sender.send((generation, sessions));
         });
     }
 
@@ -289,9 +289,9 @@ impl App {
             .map(|session| session.id.clone())?;
 
         self.session_load_generation = self.session_load_generation.wrapping_add(1);
-        self.sessions_loading = false;
         self.new_session_reload_baseline = None;
         self.replace_sessions(sessions);
+        self.sessions_loading = false;
         Some(new_session_id)
     }
 
@@ -470,7 +470,7 @@ impl App {
         let sender = self.remote_log_sender.clone();
         std::thread::spawn(move || {
             let log = load_remote_task_log(&id);
-            drop(sender.send((id, log)));
+            let _ = sender.send((id, log));
         });
     }
 
