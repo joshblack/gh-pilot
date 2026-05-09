@@ -1,5 +1,6 @@
-use crate::app::{App, FlatItem, Mode, Panel};
-use crate::session::{load_turns, session_db_path, SessionStatus};
+use crate::app::{App, Mode, Panel};
+use crate::session::{load_turns, session_db_path, CopilotSession, SessionStatus};
+use chrono::{DateTime, Utc};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Position, Rect},
     style::{Color, Modifier, Style},
@@ -16,18 +17,14 @@ const WAITING_COLOR: Color = Color::Rgb(0xe0, 0xaf, 0x68);
 const IDLE_COLOR: Color = Color::Rgb(0x56, 0x5f, 0x89);
 const ERROR_COLOR: Color = Color::Rgb(0xf7, 0x76, 0x8e);
 const ACCENT_COLOR: Color = Color::Rgb(0x7a, 0xa2, 0xf7);
-const GROUP_COLOR: Color = Color::Rgb(0x7d, 0xcf, 0xff);
 const BACKGROUND_COLOR: Color = Color::Rgb(0x1a, 0x1b, 0x26);
-const SURFACE_COLOR: Color = Color::Rgb(0x24, 0x28, 0x3b);
+const SURFACE_COLOR: Color = BACKGROUND_COLOR;
 const TEXT_COLOR: Color = Color::Rgb(0xc0, 0xca, 0xf5);
 const MUTED_COLOR: Color = IDLE_COLOR;
-const LOAD_MORE_COLOR: Color = WAITING_COLOR;
-const SELECTED_BG: Color = ACCENT_COLOR;
-const SELECTED_FG: Color = BACKGROUND_COLOR;
 const USER_MSG_COLOR: Color = ACCENT_COLOR;
 const AGENT_MSG_COLOR: Color = TEXT_COLOR;
 const MARKDOWN_TEXT_COLOR: Color = TEXT_COLOR;
-const MARKDOWN_HEADING_COLOR: Color = GROUP_COLOR;
+const MARKDOWN_HEADING_COLOR: Color = ACCENT_COLOR;
 const MARKDOWN_MARKER_COLOR: Color = WAITING_COLOR;
 const MARKDOWN_CODE_COLOR: Color = RUNNING_COLOR;
 const MAX_LIST_MARKER_DIGITS: usize = 9;
@@ -97,13 +94,8 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
         Style::default().fg(MUTED_COLOR)
     };
 
-    let title = if let Some(group) = app.focused_group.as_deref() {
-        format!(" Sessions — {} ", short_path(group))
-    } else {
-        " Sessions ".to_string()
-    };
     let block = Block::default()
-        .title(title)
+        .title(" Sessions ")
         .title_style(
             Style::default()
                 .fg(ACCENT_COLOR)
@@ -138,112 +130,149 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
 
     let mut items: Vec<ListItem> = Vec::new();
     let mut list_state = ListState::default();
-    let mut list_idx = 0usize;
+    let now = Utc::now();
 
-    for (flat_idx, item) in app.flat_list.iter().enumerate() {
-        match item {
-            FlatItem::GroupHeader(path) => {
-                let label = short_path(path);
-                let is_cursor = app.cursor == flat_idx;
-                let is_collapsed = app.collapsed_groups.contains(path);
-                let is_focused_group = app.focused_group.as_deref() == Some(path.as_str());
-                let prefix = if is_cursor && is_focused {
-                    "❯ "
-                } else {
-                    "  "
-                };
-                let marker = if is_collapsed { "▸ " } else { "▾ " };
-                let focus_suffix = if is_focused_group { "  focused" } else { "" };
-                let style = if is_cursor && is_focused {
-                    Style::default()
-                        .fg(SELECTED_FG)
-                        .bg(SELECTED_BG)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default()
-                        .fg(GROUP_COLOR)
-                        .add_modifier(Modifier::BOLD)
-                };
-                items.push(ListItem::new(Line::from(vec![
-                    Span::raw(prefix),
-                    Span::styled(marker, style),
-                    Span::styled(label, style),
-                    Span::styled(focus_suffix, Style::default().fg(MUTED_COLOR)),
-                ])));
-                if is_cursor {
-                    list_state.select(Some(list_idx));
-                }
-                list_idx += 1;
-            }
-            FlatItem::SessionEntry(idx) => {
-                let session = &app.sessions[*idx];
-                let is_cursor = app.cursor == flat_idx;
-                let is_selected = app.selected_session == Some(*idx);
+    for (flat_idx, idx) in app.flat_list.iter().enumerate() {
+        let session = &app.sessions[*idx];
+        let is_cursor = app.cursor == flat_idx;
+        let is_selected = app.selected_session == Some(*idx);
 
-                let (status_color, status_sym) = status_display(&session.status);
+        let name_style = if (is_cursor && is_focused) || is_selected {
+            Style::default().fg(TEXT_COLOR).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(TEXT_COLOR)
+        };
 
-                let name = session.display_name();
-                let time_str = session.updated_at.format("%m/%d %H:%M").to_string();
-                let prefix = if is_cursor && is_focused {
-                    "  ❯ "
-                } else {
-                    "    "
-                };
+        let prefix = if is_cursor && is_focused {
+            "▌ "
+        } else {
+            "  "
+        };
+        items.push(ListItem::new(Text::from(vec![
+            session_title_line(
+                session,
+                inner.width as usize,
+                prefix,
+                is_cursor && is_focused,
+                name_style,
+                now,
+            ),
+            session_description_line(
+                session,
+                inner.width as usize,
+                prefix,
+                is_cursor && is_focused,
+            ),
+        ])));
 
-                let name_style = if is_cursor && is_focused {
-                    Style::default()
-                        .fg(SELECTED_FG)
-                        .bg(SELECTED_BG)
-                        .add_modifier(Modifier::BOLD)
-                } else if is_selected {
-                    Style::default().fg(TEXT_COLOR).add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(TEXT_COLOR)
-                };
-
-                items.push(ListItem::new(Line::from(vec![
-                    Span::raw(prefix),
-                    Span::styled(status_sym, Style::default().fg(status_color)),
-                    Span::raw(" "),
-                    Span::styled(name, name_style),
-                    Span::styled(format!("  {time_str}"), Style::default().fg(MUTED_COLOR)),
-                ])));
-
-                if is_cursor {
-                    list_state.select(Some(list_idx));
-                }
-                list_idx += 1;
-            }
-            FlatItem::LoadMore { hidden_count, .. } => {
-                let is_cursor = app.cursor == flat_idx;
-                let prefix = if is_cursor && is_focused {
-                    "  ❯ "
-                } else {
-                    "    "
-                };
-                let style = if is_cursor && is_focused {
-                    Style::default()
-                        .fg(LOAD_MORE_COLOR)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(LOAD_MORE_COLOR)
-                };
-                items.push(ListItem::new(Line::from(vec![
-                    Span::raw(prefix),
-                    Span::styled(format!("… {hidden_count} more  [Enter to expand]"), style),
-                ])));
-                if is_cursor {
-                    list_state.select(Some(list_idx));
-                }
-                list_idx += 1;
-            }
+        if is_cursor {
+            list_state.select(Some(flat_idx));
         }
     }
 
     let list = List::new(items)
         .style(Style::default().bg(SURFACE_COLOR))
-        .highlight_style(Style::default().fg(SELECTED_FG).bg(SELECTED_BG));
+        .highlight_style(Style::default());
     f.render_stateful_widget(list, inner, &mut list_state);
+}
+
+fn active_prefix(prefix: &str, is_active: bool) -> Span<'static> {
+    if is_active {
+        Span::styled(
+            prefix.to_string(),
+            Style::default()
+                .fg(ACCENT_COLOR)
+                .add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::raw(prefix.to_string())
+    }
+}
+
+fn session_title_line(
+    session: &CopilotSession,
+    width: usize,
+    prefix: &str,
+    is_active: bool,
+    name_style: Style,
+    now: DateTime<Utc>,
+) -> Line<'static> {
+    let time = relative_time(session, now);
+    let fixed_width = prefix.chars().count() + time.chars().count() + 1;
+    let title_width = width.saturating_sub(fixed_width).max(1);
+    let title = truncate_ellipsis(&single_line(&session.display_name()), title_width);
+    let used_width = prefix.chars().count() + title.chars().count() + time.chars().count();
+    let spacer = " ".repeat(width.saturating_sub(used_width).max(1));
+
+    Line::from(vec![
+        active_prefix(prefix, is_active),
+        Span::styled(title, name_style),
+        Span::raw(spacer),
+        Span::styled(time, Style::default().fg(MUTED_COLOR)),
+    ])
+}
+
+fn session_description_line(
+    session: &CopilotSession,
+    width: usize,
+    prefix: &str,
+    is_active: bool,
+) -> Line<'static> {
+    let message = session
+        .last_agent_message
+        .as_deref()
+        .map(single_line)
+        .filter(|message| !message.is_empty())
+        .unwrap_or_else(|| "No agent response yet.".to_string());
+    let prefix_width = prefix.chars().count();
+    let description = truncate_ellipsis(&message, width.saturating_sub(prefix_width).max(1));
+
+    Line::from(vec![
+        active_prefix(prefix, is_active),
+        Span::styled(description, Style::default().fg(MUTED_COLOR)),
+    ])
+}
+
+fn relative_time(session: &CopilotSession, now: DateTime<Utc>) -> String {
+    let seconds = (now - session.updated_at).num_seconds().max(0);
+    if seconds < 60 {
+        return format!("{seconds}s");
+    }
+
+    let minutes = seconds / 60;
+    if minutes < 60 {
+        return format!("{minutes}m");
+    }
+
+    let hours = minutes / 60;
+    if hours < 24 {
+        return format!("{hours}h");
+    }
+
+    let days = hours / 24;
+    if days < 7 {
+        return format!("{days}d");
+    }
+
+    let weeks = days / 7;
+    format!("{weeks}w")
+}
+
+fn single_line(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn truncate_ellipsis(value: &str, max_width: usize) -> String {
+    if value.chars().count() <= max_width {
+        return value.to_string();
+    }
+    if max_width <= 1 {
+        return "…".to_string();
+    }
+
+    let mut truncated: String = value.chars().take(max_width - 1).collect();
+    truncated.push('…');
+    truncated
 }
 
 // ── Detail panel (right) ──────────────────────────────────────────────────────
@@ -295,12 +324,6 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
 
     let session = &app.sessions[idx];
     let block = Block::default()
-        .title(format!(" {} ", session.display_name()))
-        .title_style(
-            Style::default()
-                .fg(ACCENT_COLOR)
-                .add_modifier(Modifier::BOLD),
-        )
         .borders(Borders::ALL)
         .style(Style::default().bg(SURFACE_COLOR))
         .border_style(border_style);
@@ -309,20 +332,18 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
 
     let layout = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(7), Constraint::Min(1)])
+        .constraints([Constraint::Length(5), Constraint::Min(1)])
         .split(inner);
 
     // Info card
     let (status_color, status_sym) = status_display(&session.status);
 
-    let mut info_lines = vec![
+    let info_lines = vec![
         Line::from(vec![
-            Span::styled("  Status:    ", Style::default().fg(MUTED_COLOR)),
+            Span::styled("  Title:     ", Style::default().fg(MUTED_COLOR)),
             Span::styled(
-                format!("{status_sym} {}", session.status.label()),
-                Style::default()
-                    .fg(status_color)
-                    .add_modifier(Modifier::BOLD),
+                session.display_name(),
+                Style::default().fg(TEXT_COLOR).add_modifier(Modifier::BOLD),
             ),
         ]),
         Line::from(vec![
@@ -332,34 +353,16 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
                 Style::default().fg(TEXT_COLOR),
             ),
         ]),
+        Line::from(vec![
+            Span::styled("  Status:    ", Style::default().fg(MUTED_COLOR)),
+            Span::styled(
+                format!("{status_sym} {}", session.status.label()),
+                Style::default()
+                    .fg(status_color)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
     ];
-
-    if let Some(ref repo) = session.repository {
-        info_lines.push(Line::from(vec![
-            Span::styled("  Repo:      ", Style::default().fg(MUTED_COLOR)),
-            Span::styled(repo.clone(), Style::default().fg(TEXT_COLOR)),
-        ]));
-    }
-    if let Some(ref branch) = session.branch {
-        info_lines.push(Line::from(vec![
-            Span::styled("  Branch:    ", Style::default().fg(MUTED_COLOR)),
-            Span::styled(branch.clone(), Style::default().fg(TEXT_COLOR)),
-        ]));
-    }
-    info_lines.push(Line::from(vec![
-        Span::styled("  Updated:   ", Style::default().fg(MUTED_COLOR)),
-        Span::styled(
-            session.updated_at.format("%Y-%m-%d %H:%M UTC").to_string(),
-            Style::default().fg(TEXT_COLOR),
-        ),
-    ]));
-    info_lines.push(Line::from(vec![
-        Span::styled("  ID:        ", Style::default().fg(MUTED_COLOR)),
-        Span::styled(
-            format!("{}…", &session.id[..8]),
-            Style::default().fg(MUTED_COLOR),
-        ),
-    ]));
 
     let info_card = Paragraph::new(info_lines)
         .block(
@@ -813,21 +816,9 @@ fn footer_shortcuts(app: &App) -> Vec<(&'static str, &'static str)> {
     match app.active_panel {
         Panel::Sessions => {
             let mut shortcuts = vec![("Navigate", "j/k")];
-            match app.flat_list.get(app.cursor) {
-                Some(FlatItem::SessionEntry(_)) => {
-                    shortcuts.push(("View", "Enter"));
-                    shortcuts.push(("Open", "o"));
-                }
-                Some(FlatItem::GroupHeader(path)) => {
-                    if app.collapsed_groups.contains(path) {
-                        shortcuts.push(("Expand dir", "Enter"));
-                    } else {
-                        shortcuts.push(("Collapse dir", "Enter"));
-                    }
-                    shortcuts.push(("Focus dir", "f"));
-                }
-                Some(FlatItem::LoadMore { .. }) => shortcuts.push(("Load more", "Enter")),
-                None => {}
+            if app.flat_list.get(app.cursor).is_some() {
+                shortcuts.push(("View", "Enter"));
+                shortcuts.push(("Open", "o"));
             }
             shortcuts.push(("New", "n"));
             shortcuts.push(("Help", "?"));
@@ -921,16 +912,10 @@ fn help_lines() -> Vec<Line<'static>> {
         help_heading("Sessions panel"),
         help_shortcut("j / ↓", "Move selection down"),
         help_shortcut("k / ↑", "Move selection up"),
-        help_shortcut(
-            "Enter / Space",
-            "View a session, expand a group, or load more",
-        ),
+        help_shortcut("Enter / Space", "View the selected session"),
         help_shortcut("o", "Open the selected session in Copilot"),
         help_shortcut("n", "Launch a new Copilot session"),
         help_shortcut("r", "Reload sessions from disk"),
-        help_shortcut("f", "Focus or unfocus the current directory"),
-        help_shortcut("c", "Collapse or expand the current directory"),
-        help_shortcut("Esc", "Clear directory focus"),
         Line::from(""),
         help_heading("Detail panel"),
         help_shortcut("j / ↓", "Scroll conversation down"),
@@ -940,7 +925,6 @@ fn help_lines() -> Vec<Line<'static>> {
         help_shortcut("o", "Open the selected session in Copilot"),
         help_shortcut("n", "Launch a new Copilot session"),
         help_shortcut("r", "Reload sessions from disk"),
-        help_shortcut("f", "Focus or unfocus the current directory"),
         Line::from(""),
         help_heading("Embedded terminal"),
         help_shortcut("Ctrl+F", "Toggle fullscreen"),
@@ -964,7 +948,7 @@ fn help_heading(text: &'static str) -> Line<'static> {
     Line::from(Span::styled(
         format!("  {text}"),
         Style::default()
-            .fg(GROUP_COLOR)
+            .fg(ACCENT_COLOR)
             .add_modifier(Modifier::BOLD),
     ))
 }

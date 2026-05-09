@@ -290,12 +290,9 @@ fn handle_normal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
             KeyCode::PageDown => app.scroll_detail_page_down(),
             KeyCode::PageUp => app.scroll_detail_page_up(),
             KeyCode::Enter | KeyCode::Char(' ') => app.select_current(),
-            KeyCode::Char('c') => app.toggle_current_group_collapsed(),
-            KeyCode::Char('f') => app.toggle_directory_focus(),
             KeyCode::Char('o') => app.open_session_embedded(),
             KeyCode::Char('n') => app.begin_new_session(),
             KeyCode::Char('r') => app.reload(),
-            KeyCode::Esc => app.clear_directory_focus(),
             _ => {}
         },
         Panel::Detail => match key {
@@ -305,7 +302,6 @@ fn handle_normal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
             KeyCode::PageDown => app.scroll_detail_page_down(),
             KeyCode::PageUp => app.scroll_detail_page_up(),
             KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => app.focus_sessions(),
-            KeyCode::Char('f') => app.toggle_directory_focus(),
             KeyCode::Char('o') => app.open_session_embedded(),
             KeyCode::Char('n') => app.begin_new_session(),
             KeyCode::Char('r') => app.reload(),
