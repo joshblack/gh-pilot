@@ -7,3 +7,6 @@
 
 # Added by cargo
 /target
+
+# Remove release binary, used for `gh extension install .`
+gh-pilot
