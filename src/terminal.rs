@@ -458,6 +458,9 @@ fn copilot_shell_command_with_env(
 }
 
 fn terminal_env_assignments(env: impl Fn(&str) -> Option<String>) -> Vec<String> {
+    // TERM and COLORTERM get color-capable fallbacks. Terminal-emulator-specific
+    // variables should only be forwarded when the host set them; otherwise we
+    // would mislead Copilot about which terminal is actually rendering output.
     let terminal_env = [
         ("TERM", COPILOT_TERM),
         ("COLORTERM", COPILOT_COLORTERM),

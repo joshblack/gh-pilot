@@ -163,7 +163,7 @@ where
                         }) {
                         Ok(tmux_session) => {
                             let new_session_id = app.reload_if_new_session_created();
-                            let reuse_error = new_session_id
+                            let tmux_rename_error = new_session_id
                                 .as_deref()
                                 .and_then(|id| reuse_tmux_session(&tmux_session, id).err());
                             app.clear_new_session_reload_watch();
@@ -171,7 +171,7 @@ where
                             app.mode = Mode::Normal;
                             app.terminal_fullscreen = false;
                             app.reload();
-                            app.status_message = Some(match (new_session_id, reuse_error) {
+                            app.status_message = Some(match (new_session_id, tmux_rename_error) {
                                 (Some(_), Some(e)) => {
                                     format!("New session loaded; tmux reuse failed: {e}")
                                 }
