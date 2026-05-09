@@ -14,11 +14,7 @@ Install as a `gh` extension:
 gh extension install joshblack/gh-pilot
 ```
 
-`gh extension install` downloads the prebuilt binary from the latest GitHub
-Release for your platform. Releases are published automatically when a `v*` tag
-is pushed.
-
-Start the UI:
+Run the following command:
 
 ```sh
 gh pilot

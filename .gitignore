@@ -1,1 +1,9 @@
+# Editor
+.DS_Store
+*.swp
+.idea
+.vscode
+.tool-versions
+
+# Added by cargo
 /target
