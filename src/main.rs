@@ -16,7 +16,7 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 use session::copilot_binary;
 use std::{
-    io,
+    io::{self, Write},
     path::PathBuf,
     time::{Duration, Instant},
 };
@@ -182,7 +182,9 @@ where
         }
 
         if last_status_poll.elapsed() >= app.status_poll_interval() {
-            app.reload();
+            if app.refresh_statuses() {
+                notify_waiting_agent();
+            }
             last_status_poll = Instant::now();
         }
 
@@ -224,6 +226,11 @@ where
     }
 
     Ok(())
+}
+
+fn notify_waiting_agent() {
+    let _ = io::stdout().write_all(b"\x07");
+    let _ = io::stdout().flush();
 }
 
 /// Calculate the rows/cols available for the embedded PTY given the terminal size.
