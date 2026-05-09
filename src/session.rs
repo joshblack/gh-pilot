@@ -1,6 +1,9 @@
+use crate::terminal::{tmux_session_name, TMUX_SESSION_PREFIX};
 use chrono::{DateTime, Duration, Utc};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 // ── Status ──────────────────────────────────────────────────────────────────
 
@@ -110,6 +113,7 @@ pub fn load_sessions(copilot_dir: &Path) -> Vec<CopilotSession> {
     let state_dir = session_state_dir(copilot_dir);
     let db_path = session_db_path(copilot_dir);
     let oldest_active = Utc::now() - Duration::days(7);
+    let active_tmux_sessions = active_tmux_session_names();
 
     let mut sessions = Vec::new();
 
@@ -137,7 +141,12 @@ pub fn load_sessions(copilot_dir: &Path) -> Vec<CopilotSession> {
                     session.summary = load_summary_from_db(&db_path, &session.id);
                 }
                 session.last_agent_message = load_last_agent_message_from_db(&db_path, &session.id);
-                session.status = detect_session_status(&db_path, &session.id);
+                session.status = detect_session_status(
+                    copilot_dir,
+                    &db_path,
+                    &session.id,
+                    &active_tmux_sessions,
+                );
                 sessions.push(session);
             }
         }
@@ -146,6 +155,17 @@ pub fn load_sessions(copilot_dir: &Path) -> Vec<CopilotSession> {
     // Sort newest-first by updated_at
     sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     sessions
+}
+
+/// Refresh status for already-loaded sessions using active gh-mission-control tmux sessions.
+pub fn refresh_session_statuses(copilot_dir: &Path, sessions: &mut [CopilotSession]) {
+    let db_path = session_db_path(copilot_dir);
+    let active_tmux_sessions = active_tmux_session_names();
+
+    for session in sessions {
+        session.status =
+            detect_session_status(copilot_dir, &db_path, &session.id, &active_tmux_sessions);
+    }
 }
 
 /// Load conversation turns for a session from the SQLite database.
@@ -287,9 +307,22 @@ fn load_last_agent_message_from_db(db_path: &Path, session_id: &str) -> Option<S
     .filter(|s| !s.trim().is_empty())
 }
 
-fn detect_session_status(db_path: &Path, session_id: &str) -> SessionStatus {
-    if !is_session_active(session_id) {
+fn detect_session_status(
+    copilot_dir: &Path,
+    db_path: &Path,
+    session_id: &str,
+    active_tmux_sessions: &HashSet<String>,
+) -> SessionStatus {
+    if !active_tmux_sessions.contains(&tmux_session_name(session_id)) {
         return SessionStatus::Idle;
+    }
+
+    // The event stream records turn starts, permission prompts, and turn ends as
+    // they happen, so it reflects live agent state before the summary DB catches up.
+    if let Some(status) =
+        detect_session_status_from_events(&event_log_path(copilot_dir, session_id))
+    {
+        return status;
     }
 
     match load_latest_turn_from_db(db_path, session_id) {
@@ -301,6 +334,100 @@ fn detect_session_status(db_path: &Path, session_id: &str) -> SessionStatus {
         }
         _ => SessionStatus::Waiting,
     }
+}
+
+fn event_log_path(copilot_dir: &Path, session_id: &str) -> PathBuf {
+    session_state_dir(copilot_dir)
+        .join(session_id)
+        .join("events.jsonl")
+}
+
+fn detect_session_status_from_events(path: &Path) -> Option<SessionStatus> {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|content| detect_session_status_from_event_content(&content))
+}
+
+fn detect_session_status_from_event_content(content: &str) -> Option<SessionStatus> {
+    let mut saw_event = false;
+    let mut active_turn: Option<String> = None;
+    let mut pending_permissions = HashSet::new();
+    let mut saw_error = false;
+
+    for line in content.lines() {
+        let Ok(event) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let Some(event_type) = event.get("type").and_then(|value| value.as_str()) else {
+            continue;
+        };
+        saw_event = true;
+
+        let data = event.get("data");
+        match event_type {
+            "assistant.turn_start" => {
+                active_turn = data
+                    .and_then(|data| data.get("turnId"))
+                    .and_then(|value| value.as_str())
+                    .map(ToString::to_string);
+                pending_permissions.clear();
+                saw_error = false;
+            }
+            "assistant.turn_end" => {
+                if active_turn.as_deref()
+                    == data
+                        .and_then(|data| data.get("turnId"))
+                        .and_then(|value| value.as_str())
+                {
+                    active_turn = None;
+                    pending_permissions.clear();
+                }
+            }
+            "permission.requested" => {
+                if let Some(request_id) = data
+                    .and_then(|data| data.get("requestId"))
+                    .and_then(|value| value.as_str())
+                {
+                    pending_permissions.insert(request_id.to_string());
+                }
+            }
+            "permission.completed" => {
+                if let Some(request_id) = data
+                    .and_then(|data| data.get("requestId"))
+                    .and_then(|value| value.as_str())
+                {
+                    pending_permissions.remove(request_id);
+                }
+            }
+            "tool.execution_complete" => {
+                if data
+                    .and_then(|data| data.get("success"))
+                    .and_then(|value| value.as_bool())
+                    .is_some_and(|success| !success)
+                {
+                    saw_error = true;
+                }
+            }
+            _ if event_type.ends_with(".error") => {
+                saw_error = true;
+            }
+            _ => {}
+        }
+    }
+
+    if !saw_event {
+        return None;
+    }
+    if saw_error {
+        return Some(SessionStatus::Error);
+    }
+    if !pending_permissions.is_empty() {
+        return Some(SessionStatus::Waiting);
+    }
+    if active_turn.is_some() {
+        return Some(SessionStatus::Running);
+    }
+    Some(SessionStatus::Waiting)
 }
 
 fn load_latest_turn_from_db(
@@ -338,38 +465,76 @@ fn response_indicates_error(response: &str) -> bool {
     .any(|needle| response.contains(needle))
 }
 
-/// Check if a copilot session is currently active by scanning running processes.
-/// On Linux this reads /proc/*/cmdline; returns false on other platforms.
-fn is_session_active(session_id: &str) -> bool {
-    #[cfg(target_os = "linux")]
-    {
-        let proc = match fs::read_dir("/proc") {
-            Ok(e) => e,
-            Err(_) => return false,
-        };
-        for entry in proc.flatten() {
-            let cmdline_path = entry.path().join("cmdline");
-            if let Ok(bytes) = fs::read(&cmdline_path) {
-                // cmdline args are NUL-separated
-                let cmdline = String::from_utf8_lossy(&bytes);
-                if cmdline.contains(session_id) {
-                    return true;
-                }
-            }
-        }
-        false
+fn active_tmux_session_names() -> HashSet<String> {
+    let output = Command::new("tmux")
+        .arg("list-sessions")
+        .arg("-F")
+        .arg("#{session_name}")
+        .stderr(Stdio::null())
+        .output();
+
+    let Ok(output) = output else {
+        return HashSet::new();
+    };
+    if !output.status.success() {
+        return HashSet::new();
     }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = session_id;
-        false
-    }
+
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|name| name.starts_with(TMUX_SESSION_PREFIX))
+        .map(ToString::to_string)
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn event_status_reports_running_for_active_turn() {
+        let content = r#"{"type":"assistant.turn_start","data":{"turnId":"1"}}"#;
+
+        assert_eq!(
+            detect_session_status_from_event_content(content),
+            Some(SessionStatus::Running)
+        );
+    }
+
+    #[test]
+    fn event_status_reports_waiting_for_pending_permission() {
+        let content = r#"{"type":"assistant.turn_start","data":{"turnId":"1"}}
+{"type":"permission.requested","data":{"requestId":"approve-1"}}"#;
+
+        assert_eq!(
+            detect_session_status_from_event_content(content),
+            Some(SessionStatus::Waiting)
+        );
+    }
+
+    #[test]
+    fn event_status_reports_running_after_permission_completes() {
+        let content = r#"{"type":"assistant.turn_start","data":{"turnId":"1"}}
+{"type":"permission.requested","data":{"requestId":"approve-1"}}
+{"type":"permission.completed","data":{"requestId":"approve-1"}}"#;
+
+        assert_eq!(
+            detect_session_status_from_event_content(content),
+            Some(SessionStatus::Running)
+        );
+    }
+
+    #[test]
+    fn event_status_reports_waiting_after_turn_end() {
+        let content = r#"{"type":"assistant.turn_start","data":{"turnId":"1"}}
+{"type":"assistant.turn_end","data":{"turnId":"1"}}"#;
+
+        assert_eq!(
+            detect_session_status_from_event_content(content),
+            Some(SessionStatus::Waiting)
+        );
+    }
 
     #[test]
     fn load_sessions_prefers_workspace_title_over_db_summary() {

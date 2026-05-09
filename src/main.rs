@@ -7,8 +7,8 @@ use anyhow::{Context, Result};
 use app::{App, Mode, Panel, PendingAction};
 use crossterm::{
     event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseEvent,
-        MouseEventKind,
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
+        MouseEvent, MouseEventKind,
     },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -16,7 +16,7 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 use session::copilot_binary;
 use std::{
-    io,
+    io::{self, Write},
     path::PathBuf,
     time::{Duration, Instant},
 };
@@ -182,7 +182,9 @@ where
         }
 
         if last_status_poll.elapsed() >= app.status_poll_interval() {
-            app.reload();
+            if app.refresh_statuses() {
+                notify_waiting_agent();
+            }
             last_status_poll = Instant::now();
         }
 
@@ -194,9 +196,11 @@ where
         if event::poll(timeout).context("Event poll failed")? {
             match event::read().context("Event read failed")? {
                 Event::Key(key) => {
-                    handle_key(app, key.code, key.modifiers);
-                    if app.status_message.is_some() {
-                        status_since = Some(Instant::now());
+                    if should_handle_key_event(key.kind) {
+                        handle_key(app, key.code, key.modifiers);
+                        if app.status_message.is_some() {
+                            status_since = Some(Instant::now());
+                        }
                     }
                 }
                 Event::Mouse(mouse) => handle_mouse(app, mouse),
@@ -222,6 +226,11 @@ where
     }
 
     Ok(())
+}
+
+fn notify_waiting_agent() {
+    let _ = io::stdout().write_all(b"\x07");
+    let _ = io::stdout().flush();
 }
 
 /// Calculate the rows/cols available for the embedded PTY given the terminal size.
@@ -256,6 +265,10 @@ fn handle_key(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
         Mode::NewSessionDir => handle_input(app, key),
         Mode::Terminal => handle_terminal(app, key, modifiers),
     }
+}
+
+fn should_handle_key_event(kind: KeyEventKind) -> bool {
+    matches!(kind, KeyEventKind::Press | KeyEventKind::Repeat)
 }
 
 fn handle_normal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
@@ -340,5 +353,21 @@ fn handle_terminal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
         if let Some(ref term) = app.embedded_terminal {
             term.write_input(&bytes);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn handles_key_presses_and_repeats() {
+        assert!(should_handle_key_event(KeyEventKind::Press));
+        assert!(should_handle_key_event(KeyEventKind::Repeat));
+    }
+
+    #[test]
+    fn ignores_key_releases() {
+        assert!(!should_handle_key_event(KeyEventKind::Release));
     }
 }
