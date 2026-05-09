@@ -66,6 +66,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             area,
         );
     }
+    if app.mode == Mode::Help {
+        draw_help_popup(f, app, area);
+    }
 
     if app.status_message.is_some() {
         draw_status_toast(f, app, area);
@@ -779,24 +782,18 @@ fn vt100_color_to_ratatui(color: vt100::Color) -> Color {
 fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     let (text, style) = match app.mode {
         Mode::NewSessionDir => (
-            "Launch: Enter  Cancel: Esc",
+            "Launch: Enter  Cancel: Esc".to_string(),
             Style::default().fg(WAITING_COLOR),
         ),
         Mode::Terminal => (
-            "Fullscreen: Ctrl+F  Detach: Ctrl+W  Input: forwarded to Copilot",
+            "Fullscreen: Ctrl+F  Detach: Ctrl+W  Input: forwarded to Copilot".to_string(),
             Style::default().fg(RUNNING_COLOR),
         ),
-        Mode::Normal => {
-            let t = match app.active_panel {
-                Panel::Sessions => {
-                    "Navigate: j/k  Preview scroll: PageUp/PageDown  View: Enter  Open: o  New: n  Reload: r  Quit: q"
-                }
-                Panel::Detail => {
-                    "Scroll: j/k  Back: Esc/h  Open: o  New: n  Reload: r  Quit: q"
-                }
-            };
-            (t, Style::default().fg(MUTED_COLOR))
-        }
+        Mode::Help => (
+            "Scroll: j/k  Close: Esc/q  Help: ?".to_string(),
+            Style::default().fg(MUTED_COLOR),
+        ),
+        Mode::Normal => (footer_text(app), Style::default().fg(MUTED_COLOR)),
     };
 
     f.render_widget(
@@ -805,6 +802,38 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
             .alignment(Alignment::Center),
         area,
     );
+}
+
+fn footer_text(app: &App) -> String {
+    footer_shortcuts(app)
+        .into_iter()
+        .map(|(action, key)| format!("{action}: {key}"))
+        .collect::<Vec<_>>()
+        .join("  ")
+}
+
+fn footer_shortcuts(app: &App) -> Vec<(&'static str, &'static str)> {
+    match app.active_panel {
+        Panel::Sessions => {
+            let mut shortcuts = vec![("Navigate", "j/k")];
+            if app.flat_list.get(app.cursor).is_some() {
+                shortcuts.push(("View", "Enter"));
+                shortcuts.push(("Open", "o"));
+            }
+            shortcuts.push(("New", "n"));
+            shortcuts.push(("Help", "?"));
+            shortcuts
+        }
+        Panel::Detail => {
+            let mut shortcuts = vec![("Scroll", "j/k"), ("Back", "h/Esc")];
+            if app.selected_session.is_some() {
+                shortcuts.push(("Open", "o"));
+            }
+            shortcuts.push(("New", "n"));
+            shortcuts.push(("Help", "?"));
+            shortcuts
+        }
+    }
 }
 
 // ── Overlays ──────────────────────────────────────────────────────────────────
@@ -834,6 +863,103 @@ fn draw_input_popup(f: &mut Frame, title: &str, input: &str, area: Rect) {
     );
 }
 
+fn draw_help_popup(f: &mut Frame, app: &App, area: Rect) {
+    let popup_height = area.height.saturating_sub(4).clamp(1, 24);
+    let popup = centered_rect(70, popup_height, area);
+    f.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .title(" Shortcuts — j/k or scroll, Esc to close ")
+        .title_style(
+            Style::default()
+                .fg(ACCENT_COLOR)
+                .add_modifier(Modifier::BOLD),
+        )
+        .borders(Borders::ALL)
+        .style(Style::default().bg(SURFACE_COLOR))
+        .border_style(Style::default().fg(ACCENT_COLOR));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let lines = help_lines();
+    let total_lines = lines.len();
+    let visible_height = inner.height as usize;
+    let max_scroll = total_lines.saturating_sub(visible_height);
+    let help_scroll = app.help_scroll.min(max_scroll);
+
+    let help = Paragraph::new(Text::from(lines))
+        .style(Style::default().bg(SURFACE_COLOR))
+        .scroll((help_scroll as u16, 0))
+        .wrap(Wrap { trim: false });
+    f.render_widget(help, inner);
+
+    if total_lines > visible_height {
+        let mut scroll_state = ScrollbarState::new(total_lines).position(help_scroll);
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(Some("↑"))
+            .end_symbol(Some("↓"));
+        f.render_stateful_widget(scrollbar, inner, &mut scroll_state);
+    }
+}
+
+fn help_lines() -> Vec<Line<'static>> {
+    vec![
+        help_heading("Global"),
+        help_shortcut("?", "Show or hide this shortcut help"),
+        help_shortcut("q", "Quit from normal mode"),
+        help_shortcut("Ctrl+C", "Quit"),
+        Line::from(""),
+        help_heading("Sessions panel"),
+        help_shortcut("j / ↓", "Move selection down"),
+        help_shortcut("k / ↑", "Move selection up"),
+        help_shortcut("Enter / Space", "View the selected session"),
+        help_shortcut("o", "Open the selected session in Copilot"),
+        help_shortcut("n", "Launch a new Copilot session"),
+        help_shortcut("r", "Reload sessions from disk"),
+        Line::from(""),
+        help_heading("Detail panel"),
+        help_shortcut("j / ↓", "Scroll conversation down"),
+        help_shortcut("k / ↑", "Scroll conversation up"),
+        help_shortcut("PageDown / PageUp", "Scroll conversation by page"),
+        help_shortcut("h / ← / Esc", "Return to the sessions panel"),
+        help_shortcut("o", "Open the selected session in Copilot"),
+        help_shortcut("n", "Launch a new Copilot session"),
+        help_shortcut("r", "Reload sessions from disk"),
+        Line::from(""),
+        help_heading("Embedded terminal"),
+        help_shortcut("Ctrl+F", "Toggle fullscreen"),
+        help_shortcut("Ctrl+W", "Detach from the embedded session"),
+        help_shortcut("Mouse", "Forwarded to Copilot while fullscreen"),
+        Line::from(""),
+        help_heading("New session prompt"),
+        help_shortcut("Enter", "Launch in the entered directory"),
+        help_shortcut("Esc", "Cancel"),
+        help_shortcut("Type", "Edit the directory path"),
+        Line::from(""),
+        help_heading("Shortcut help"),
+        help_shortcut("j / ↓ / scroll", "Scroll down"),
+        help_shortcut("k / ↑ / scroll", "Scroll up"),
+        help_shortcut("PageDown / PageUp", "Scroll by page"),
+        help_shortcut("Esc / q / ?", "Close"),
+    ]
+}
+
+fn help_heading(text: &'static str) -> Line<'static> {
+    Line::from(Span::styled(
+        format!("  {text}"),
+        Style::default()
+            .fg(ACCENT_COLOR)
+            .add_modifier(Modifier::BOLD),
+    ))
+}
+
+fn help_shortcut(key: &'static str, action: &'static str) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(format!("  {key:<18}"), Style::default().fg(ACCENT_COLOR)),
+        Span::styled(action, Style::default().fg(TEXT_COLOR)),
+    ])
+}
+
 fn draw_status_toast(f: &mut Frame, app: &App, area: Rect) {
     if let Some(msg) = &app.status_message {
         let width = (msg.len() + 4).min(area.width as usize) as u16;
@@ -860,10 +986,11 @@ fn draw_status_toast(f: &mut Frame, app: &App, area: Rect) {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn centered_rect(percent_x: u16, height: u16, area: Rect) -> Rect {
-    let w = area.width * percent_x / 100;
-    let x = (area.width - w) / 2 + area.x;
-    let y = (area.height - height) / 2 + area.y;
-    Rect::new(x, y, w, height)
+    let w = (area.width * percent_x / 100).min(area.width);
+    let h = height.min(area.height);
+    let x = area.x + area.width.saturating_sub(w) / 2;
+    let y = area.y + area.height.saturating_sub(h) / 2;
+    Rect::new(x, y, w, h)
 }
 
 fn short_path(path: &str) -> String {

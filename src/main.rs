@@ -264,6 +264,7 @@ fn handle_key(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
         Mode::Normal => handle_normal(app, key, modifiers),
         Mode::NewSessionDir => handle_input(app, key),
         Mode::Terminal => handle_terminal(app, key, modifiers),
+        Mode::Help => handle_help(app, key),
     }
 }
 
@@ -274,6 +275,10 @@ fn should_handle_key_event(kind: KeyEventKind) -> bool {
 fn handle_normal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
     if key == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
         app.should_quit = true;
+        return;
+    }
+    if key == KeyCode::Char('?') {
+        app.open_help();
         return;
     }
 
@@ -312,12 +317,28 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent) {
             MouseEventKind::ScrollDown => app.scroll_detail_down(),
             _ => {}
         },
+        Mode::Help => match mouse.kind {
+            MouseEventKind::ScrollUp => app.scroll_help_up(),
+            MouseEventKind::ScrollDown => app.scroll_help_down(),
+            _ => {}
+        },
         Mode::Terminal if app.terminal_fullscreen => {
             let bytes = mouse_to_bytes(mouse);
             if let (false, Some(term)) = (bytes.is_empty(), app.embedded_terminal.as_ref()) {
                 term.write_input(&bytes);
             }
         }
+        _ => {}
+    }
+}
+
+fn handle_help(app: &mut App, key: KeyCode) {
+    match key {
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => app.close_help(),
+        KeyCode::Char('j') | KeyCode::Down => app.scroll_help_down(),
+        KeyCode::Char('k') | KeyCode::Up => app.scroll_help_up(),
+        KeyCode::PageDown => app.scroll_help_page_down(),
+        KeyCode::PageUp => app.scroll_help_page_up(),
         _ => {}
     }
 }
@@ -369,5 +390,16 @@ mod tests {
     #[test]
     fn ignores_key_releases() {
         assert!(!should_handle_key_event(KeyEventKind::Release));
+    }
+
+    #[test]
+    fn question_mark_opens_and_closes_help() {
+        let mut app = App::new(PathBuf::from("/tmp/copilot"), PathBuf::from("/tmp"));
+
+        handle_normal(&mut app, KeyCode::Char('?'), KeyModifiers::NONE);
+        assert_eq!(app.mode, Mode::Help);
+
+        handle_help(&mut app, KeyCode::Esc);
+        assert_eq!(app.mode, Mode::Normal);
     }
 }

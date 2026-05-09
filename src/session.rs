@@ -112,6 +112,7 @@ pub fn session_db_path(copilot_dir: &Path) -> PathBuf {
 pub fn load_sessions(copilot_dir: &Path) -> Vec<CopilotSession> {
     let state_dir = session_state_dir(copilot_dir);
     let db_path = session_db_path(copilot_dir);
+    // Keep the session list focused on recently active workspaces.
     let oldest_active = Utc::now() - Duration::days(7);
     let active_tmux_sessions = active_tmux_session_names();
 
