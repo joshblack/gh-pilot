@@ -17,6 +17,7 @@ const WAITING_COLOR: Color = Color::Rgb(0xe0, 0xaf, 0x68);
 const IDLE_COLOR: Color = Color::Rgb(0x56, 0x5f, 0x89);
 const ERROR_COLOR: Color = Color::Rgb(0xf7, 0x76, 0x8e);
 const ACCENT_COLOR: Color = Color::Rgb(0x7a, 0xa2, 0xf7);
+const SELECTED_BAR_COLOR: Color = Color::Rgb(0xff, 0x9e, 0x64);
 const BACKGROUND_COLOR: Color = Color::Rgb(0x1a, 0x1b, 0x26);
 const SURFACE_COLOR: Color = BACKGROUND_COLOR;
 const TEXT_COLOR: Color = Color::Rgb(0xc0, 0xca, 0xf5);
@@ -181,7 +182,7 @@ fn active_prefix(prefix: &str, is_active: bool) -> Span<'static> {
         Span::styled(
             prefix.to_string(),
             Style::default()
-                .fg(ACCENT_COLOR)
+                .fg(SELECTED_BAR_COLOR)
                 .add_modifier(Modifier::BOLD),
         )
     } else {
