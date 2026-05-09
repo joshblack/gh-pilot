@@ -23,7 +23,10 @@ use std::{
     process::{Command, Stdio},
     time::{Duration, Instant},
 };
-use terminal::{key_to_bytes, mouse_to_bytes, EmbeddedTerminal};
+use terminal::{
+    attach_tmux_session, ensure_tmux_session, key_to_bytes, mouse_to_bytes, reuse_tmux_session,
+    EmbeddedTerminal,
+};
 
 fn main() -> Result<()> {
     let copilot_dir = session::copilot_dir();
@@ -84,6 +87,38 @@ where
         let action = std::mem::replace(&mut app.pending_action, PendingAction::None);
         match action {
             PendingAction::None => {}
+            PendingAction::OpenNative { id, cwd } => match copilot_binary() {
+                Some(bin) => {
+                    let cwd_arg = cwd.to_string_lossy();
+                    let resume_arg = format!("--resume={id}");
+                    match ensure_tmux_session(
+                        &id,
+                        &bin,
+                        &["-C", cwd_arg.as_ref(), resume_arg.as_str()],
+                        Some(&cwd),
+                    )
+                    .and_then(|tmux_session| {
+                        run_native_tmux_session(terminal, &tmux_session)?;
+                        Ok(())
+                    }) {
+                        Ok(()) => {
+                            app.mode = Mode::Normal;
+                            app.terminal_fullscreen = false;
+                            app.reload();
+                            app.status_message = Some("Returned from native terminal".into());
+                        }
+                        Err(e) => {
+                            app.status_message =
+                                Some(format!("Failed to open native terminal: {e}"));
+                        }
+                    }
+                    status_since = Some(Instant::now());
+                }
+                None => {
+                    app.status_message = Some("Copilot CLI not found (run: gh copilot)".into());
+                    status_since = Some(Instant::now());
+                }
+            },
             PendingAction::OpenEmbedded { id, cwd } => {
                 let term_size = terminal.size()?;
                 let (rows, cols) = embedded_terminal_size(term_size, app.terminal_fullscreen);
@@ -117,42 +152,49 @@ where
                     }
                 }
             }
-            PendingAction::LaunchNew { dir } => {
-                let term_size = terminal.size()?;
-                let (rows, cols) = embedded_terminal_size(term_size, app.terminal_fullscreen);
-                match copilot_binary() {
-                    Some(bin) => {
-                        let dir_str = dir.to_string_lossy().to_string();
-                        match EmbeddedTerminal::spawn(
-                            "new".into(),
-                            &bin,
-                            &["-C", dir_str.as_str()],
-                            Some(&dir),
-                            rows,
-                            cols,
-                        ) {
-                            Ok(term) => {
-                                app.capture_new_session_reload_baseline();
-                                last_new_session_reload_check = None;
-                                app.embedded_terminal = Some(term);
-                                app.mode = Mode::Terminal;
-                                app.active_panel = Panel::Detail;
-                                app.terminal_fullscreen = false;
-                            }
-                            Err(e) => {
-                                app.mode = Mode::Normal;
-                                app.status_message = Some(format!("Failed to launch: {e}"));
-                                status_since = Some(Instant::now());
-                            }
+            PendingAction::LaunchNewNative { dir } => match copilot_binary() {
+                Some(bin) => {
+                    let dir_str = dir.to_string_lossy().to_string();
+                    app.capture_new_session_reload_baseline();
+                    match ensure_tmux_session("new", &bin, &["-C", dir_str.as_str()], Some(&dir))
+                        .and_then(|tmux_session| {
+                            run_native_tmux_session(terminal, &tmux_session)?;
+                            Ok(tmux_session)
+                        }) {
+                        Ok(tmux_session) => {
+                            let new_session_id = app.reload_if_new_session_created();
+                            let tmux_rename_error = new_session_id
+                                .as_deref()
+                                .and_then(|id| reuse_tmux_session(&tmux_session, id).err());
+                            app.clear_new_session_reload_watch();
+                            last_new_session_reload_check = None;
+                            app.mode = Mode::Normal;
+                            app.terminal_fullscreen = false;
+                            app.reload();
+                            app.status_message = Some(match (new_session_id, tmux_rename_error) {
+                                (Some(_), Some(e)) => {
+                                    format!("New session loaded; tmux reuse failed: {e}")
+                                }
+                                (Some(_), None) => "New session loaded".into(),
+                                (None, _) => "Returned from native terminal".into(),
+                            });
+                        }
+                        Err(e) => {
+                            app.mode = Mode::Normal;
+                            app.clear_new_session_reload_watch();
+                            last_new_session_reload_check = None;
+                            app.status_message = Some(format!("Failed to launch: {e}"));
                         }
                     }
-                    None => {
-                        app.mode = Mode::Normal;
-                        app.status_message = Some("Copilot CLI not found (run: gh copilot)".into());
-                        status_since = Some(Instant::now());
-                    }
+                    status_since = Some(Instant::now());
                 }
-            }
+                None => {
+                    app.mode = Mode::Normal;
+                    app.clear_new_session_reload_watch();
+                    app.status_message = Some("Copilot CLI not found (run: gh copilot)".into());
+                    status_since = Some(Instant::now());
+                }
+            },
             PendingAction::OpenRemoteTask { url } => {
                 match open_url_in_browser(&url) {
                     Ok(()) => {
@@ -263,6 +305,36 @@ where
     Ok(())
 }
 
+fn run_native_tmux_session<B: ratatui::backend::Backend + Write>(
+    terminal: &mut Terminal<B>,
+    tmux_session: &str,
+) -> Result<()>
+where
+    B::Error: Send + Sync + 'static,
+{
+    terminal.show_cursor().ok();
+    disable_raw_mode().ok();
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )
+    .context("Failed to leave TUI before native terminal attach")?;
+
+    let attach_result = attach_tmux_session(tmux_session);
+
+    enable_raw_mode().context("Failed to re-enable raw mode")?;
+    execute!(
+        terminal.backend_mut(),
+        EnterAlternateScreen,
+        EnableMouseCapture
+    )
+    .context("Failed to restore TUI after native terminal attach")?;
+    terminal.clear()?;
+
+    attach_result
+}
+
 fn notify_waiting_agent() {
     let _ = io::stdout().write_all(b"\x07");
     let _ = io::stdout().flush();
@@ -308,13 +380,26 @@ fn embedded_terminal_size(term_size: ratatui::layout::Size, fullscreen: bool) ->
         return (term_size.height.max(1), term_size.width.max(1));
     }
 
-    // Body + footer(1), with the terminal in the right 65% detail panel.
-    let height = term_size.height.saturating_sub(1);
-    let width = term_size.width * 65 / 100;
+    let area = ratatui::layout::Rect::new(0, 0, term_size.width, term_size.height);
+    let outer = ratatui::layout::Layout::default()
+        .direction(ratatui::layout::Direction::Vertical)
+        .constraints([
+            ratatui::layout::Constraint::Min(0),
+            ratatui::layout::Constraint::Length(1),
+        ])
+        .split(area);
+    let cols = ratatui::layout::Layout::default()
+        .direction(ratatui::layout::Direction::Horizontal)
+        .constraints([
+            ratatui::layout::Constraint::Percentage(35),
+            ratatui::layout::Constraint::Percentage(65),
+        ])
+        .split(outer[0]);
+    let detail_panel = cols[1];
 
     // Subtract borders (2 each side).
-    let rows = height.saturating_sub(2).max(1);
-    let cols = width.saturating_sub(2).max(1); // left + right borders
+    let rows = detail_panel.height.saturating_sub(2).max(1);
+    let cols = detail_panel.width.saturating_sub(2).max(1);
     (rows, cols)
 }
 
@@ -377,7 +462,8 @@ fn handle_normal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
             KeyCode::PageDown => app.scroll_detail_page_down(),
             KeyCode::PageUp => app.scroll_detail_page_up(),
             KeyCode::Enter | KeyCode::Char(' ') => app.select_current(),
-            KeyCode::Char('o') => app.open_session_embedded(),
+            KeyCode::Char('o') => app.open_session_native(),
+            KeyCode::Char('e') => app.open_session_embedded(),
             KeyCode::Char('n') => app.begin_new_session(),
             KeyCode::Char('r') => app.reload(),
             _ => {}
@@ -389,7 +475,8 @@ fn handle_normal(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
             KeyCode::PageDown => app.scroll_detail_page_down(),
             KeyCode::PageUp => app.scroll_detail_page_up(),
             KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => app.focus_sessions(),
-            KeyCode::Char('o') => app.open_session_embedded(),
+            KeyCode::Char('o') => app.open_session_native(),
+            KeyCode::Char('e') => app.open_session_embedded(),
             KeyCode::Char('n') => app.begin_new_session(),
             KeyCode::Char('r') => app.reload(),
             _ => {}
@@ -527,6 +614,26 @@ mod tests {
         handle_normal(&mut app, KeyCode::Char('/'), KeyModifiers::NONE);
 
         assert_eq!(app.mode, Mode::DirectoryFilter);
+    }
+
+    #[test]
+    fn embedded_terminal_size_matches_detail_panel_inner_area() {
+        let term_size = ratatui::layout::Size {
+            width: 101,
+            height: 31,
+        };
+
+        assert_eq!(embedded_terminal_size(term_size, false), (28, 64));
+    }
+
+    #[test]
+    fn fullscreen_embedded_terminal_uses_full_terminal_size() {
+        let term_size = ratatui::layout::Size {
+            width: 101,
+            height: 31,
+        };
+
+        assert_eq!(embedded_terminal_size(term_size, true), (31, 101));
     }
 
     #[test]

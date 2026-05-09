@@ -441,7 +441,7 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
         } else {
             (
                 "Select a session with j/k + Enter",
-                "Press [o] to open a live terminal session",
+                "Press [o] for native terminal or [e] for embedded preview",
             )
         };
         let msg = Paragraph::new(Text::from(vec![
@@ -624,7 +624,7 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
         )));
         turn_lines.push(Line::from(Span::raw("")));
         turn_lines.push(Line::from(Span::styled(
-            "  Press [o] to open this session in Copilot.",
+            "  Press [o] for native terminal or [e] for embedded preview.",
             Style::default().fg(MUTED_COLOR),
         )));
     } else {
@@ -807,7 +807,22 @@ fn render_vt100_screen(f: &mut Frame, term: &crate::terminal::EmbeddedTerminal, 
 
     let rows = area.height as usize;
     let cols = area.width as usize;
+    let lines = vt100_screen_lines(screen, rows, cols);
 
+    // Render the screen content.
+    f.render_widget(Paragraph::new(Text::from(lines)), area);
+
+    // Position the cursor.
+    let (cursor_row, cursor_col) = screen.cursor_position();
+    if !screen.hide_cursor() && cursor_col < area.width && cursor_row < area.height {
+        f.set_cursor_position(Position {
+            x: area.x + cursor_col,
+            y: area.y + cursor_row,
+        });
+    }
+}
+
+fn vt100_screen_lines(screen: &vt100::Screen, rows: usize, cols: usize) -> Vec<Line<'static>> {
     let mut lines: Vec<Line> = Vec::with_capacity(rows);
 
     for row in 0..rows {
@@ -817,6 +832,7 @@ fn render_vt100_screen(f: &mut Frame, term: &crate::terminal::EmbeddedTerminal, 
 
         for col in 0..cols {
             let (ch, style) = match screen.cell(row as u16, col as u16) {
+                Some(cell) if cell.is_wide_continuation() => continue,
                 Some(cell) => {
                     let c = cell.contents();
                     // Avoid an allocation for the common blank-cell case.
@@ -836,7 +852,7 @@ fn render_vt100_screen(f: &mut Frame, term: &crate::terminal::EmbeddedTerminal, 
                 if !cur_text.is_empty() {
                     spans.push(Span::styled(std::mem::take(&mut cur_text), cur_style));
                 }
-                cur_text = ch; // ch is already a String
+                cur_text = ch;
                 cur_style = style;
             }
         }
@@ -846,17 +862,7 @@ fn render_vt100_screen(f: &mut Frame, term: &crate::terminal::EmbeddedTerminal, 
         lines.push(Line::from(spans));
     }
 
-    // Render the screen content.
-    f.render_widget(Paragraph::new(Text::from(lines)), area);
-
-    // Position the cursor.
-    let (cursor_row, cursor_col) = screen.cursor_position();
-    if !screen.hide_cursor() && cursor_col < area.width && cursor_row < area.height {
-        f.set_cursor_position(Position {
-            x: area.x + cursor_col,
-            y: area.y + cursor_row,
-        });
-    }
+    lines
 }
 
 fn cell_to_ratatui_style(cell: &vt100::Cell) -> Style {
@@ -865,6 +871,9 @@ fn cell_to_ratatui_style(cell: &vt100::Cell) -> Style {
     let mut style = Style::default().fg(fg).bg(bg);
     if cell.bold() {
         style = style.add_modifier(Modifier::BOLD);
+    }
+    if cell.dim() {
+        style = style.add_modifier(Modifier::DIM);
     }
     if cell.italic() {
         style = style.add_modifier(Modifier::ITALIC);
@@ -935,9 +944,14 @@ fn footer_shortcuts(app: &App) -> Vec<(&'static str, &'static str)> {
     match app.active_panel {
         Panel::Sessions => {
             let mut shortcuts = vec![("Navigate", "j/k"), ("Filter", "Tab or /")];
-            if app.flat_list.get(app.cursor).is_some() {
+            if let Some(idx) = app.flat_list.get(app.cursor).copied() {
                 shortcuts.push(("View", "Enter"));
-                shortcuts.push(("Open", "o"));
+                if app.sessions[idx].source == SessionSource::Remote {
+                    shortcuts.push(("Open browser", "o"));
+                } else {
+                    shortcuts.push(("Native", "o"));
+                    shortcuts.push(("Preview", "e"));
+                }
             }
             shortcuts.push(("New", "n"));
             shortcuts.push(("Help", "?"));
@@ -945,8 +959,13 @@ fn footer_shortcuts(app: &App) -> Vec<(&'static str, &'static str)> {
         }
         Panel::Detail => {
             let mut shortcuts = vec![("Scroll", "j/k"), ("Back", "h/Esc"), ("Filter", "Tab or /")];
-            if app.selected_session.is_some() {
-                shortcuts.push(("Open", "o"));
+            if let Some(idx) = app.selected_session {
+                if app.sessions[idx].source == SessionSource::Remote {
+                    shortcuts.push(("Open browser", "o"));
+                } else {
+                    shortcuts.push(("Native", "o"));
+                    shortcuts.push(("Preview", "e"));
+                }
             }
             shortcuts.push(("New", "n"));
             shortcuts.push(("Help", "?"));
@@ -1085,8 +1104,9 @@ fn help_lines() -> Vec<Line<'static>> {
         help_shortcut("j / ↓", "Move selection down"),
         help_shortcut("k / ↑", "Move selection up"),
         help_shortcut("Enter / Space", "View the selected session"),
-        help_shortcut("o", "Open the selected session in Copilot"),
-        help_shortcut("n", "Launch a new Copilot session"),
+        help_shortcut("o", "Attach to the session in the native terminal"),
+        help_shortcut("e", "Open the selected session in the embedded preview"),
+        help_shortcut("n", "Launch a new Copilot session in the native terminal"),
         help_shortcut("r", "Reload sessions from disk"),
         Line::from(""),
         help_heading("Detail panel"),
@@ -1094,8 +1114,9 @@ fn help_lines() -> Vec<Line<'static>> {
         help_shortcut("k / ↑", "Scroll conversation up"),
         help_shortcut("PageDown / PageUp", "Scroll conversation by page"),
         help_shortcut("h / ← / Esc", "Return to the sessions panel"),
-        help_shortcut("o", "Open the selected session in Copilot"),
-        help_shortcut("n", "Launch a new Copilot session"),
+        help_shortcut("o", "Attach to the session in the native terminal"),
+        help_shortcut("e", "Open the selected session in the embedded preview"),
+        help_shortcut("n", "Launch a new Copilot session in the native terminal"),
         help_shortcut("r", "Reload sessions from disk"),
         Line::from(""),
         help_heading("Embedded terminal"),
@@ -1215,5 +1236,25 @@ mod tests {
         assert_eq!(scrollbar_position(0, 10, 4), 0);
         assert_eq!(scrollbar_position(6, 10, 4), 9);
         assert_eq!(scrollbar_position(20, 10, 4), 9);
+    }
+
+    #[test]
+    fn vt100_screen_lines_skip_wide_character_continuation_cells() {
+        let mut parser = vt100::Parser::new(1, 4, 0);
+
+        parser.process("表x".as_bytes());
+
+        let lines = vt100_screen_lines(parser.screen(), 1, 4);
+        assert_eq!(lines[0].spans[0].content.as_ref(), "表x ");
+    }
+
+    #[test]
+    fn cell_to_ratatui_style_preserves_dim_attribute() {
+        let mut parser = vt100::Parser::new(1, 1, 0);
+
+        parser.process(b"\x1b[2md");
+        let style = cell_to_ratatui_style(parser.screen().cell(0, 0).unwrap());
+
+        assert!(style.add_modifier.contains(Modifier::DIM));
     }
 }
