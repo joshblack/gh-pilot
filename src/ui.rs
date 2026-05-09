@@ -1147,11 +1147,7 @@ fn draw_help_popup(f: &mut Frame, app: &mut App, area: Rect) {
 
     if total_lines > visible_height {
         let mut scroll_state = ScrollbarState::new(total_lines)
-            .position(scrollbar_position(
-                help_scroll,
-                total_lines,
-                visible_height,
-            ))
+            .position(scrollbar_position(help_scroll, total_lines, visible_height))
             .viewport_content_length(visible_height);
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(Some("↑"))
@@ -1266,10 +1262,7 @@ fn scrollbar_position(scroll: usize, total_lines: usize, visible_height: usize) 
     }
 
     let max_position = total_lines.saturating_sub(1);
-    scroll
-        .min(max_scroll)
-        .saturating_mul(max_position)
-        / max_scroll
+    scroll.min(max_scroll).saturating_mul(max_position) / max_scroll
 }
 
 fn short_path(path: &str) -> String {
