@@ -951,7 +951,9 @@ fn footer_shortcuts(app: &App) -> Vec<(&'static str, &'static str)> {
                 } else {
                     shortcuts.push(("Native", "o"));
                     shortcuts.push(("Preview", "e"));
-                    shortcuts.push(("Close", "x"));
+                    if app.can_close_session(idx) {
+                        shortcuts.push(("Close", "x"));
+                    }
                 }
             }
             shortcuts.push(("New", "n"));
@@ -967,7 +969,9 @@ fn footer_shortcuts(app: &App) -> Vec<(&'static str, &'static str)> {
                 } else {
                     shortcuts.push(("Native", "o"));
                     shortcuts.push(("Preview", "e"));
-                    shortcuts.push(("Close", "x"));
+                    if app.can_close_session(idx) {
+                        shortcuts.push(("Close", "x"));
+                    }
                 }
             }
             shortcuts.push(("New", "n"));
@@ -1265,5 +1269,62 @@ mod tests {
         let style = cell_to_ratatui_style(parser.screen().cell(0, 0).unwrap());
 
         assert!(style.add_modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
+    fn footer_hides_close_for_remote_sessions() {
+        let app = app_with_session(SessionSource::Remote, SessionStatus::Running);
+
+        let shortcuts = footer_shortcuts(&app);
+
+        assert!(!shortcuts.iter().any(|shortcut| shortcut == &("Close", "x")));
+    }
+
+    #[test]
+    fn footer_hides_close_for_idle_local_sessions() {
+        let app = app_with_session(SessionSource::Local, SessionStatus::Idle);
+
+        let shortcuts = footer_shortcuts(&app);
+
+        assert!(!shortcuts.iter().any(|shortcut| shortcut == &("Close", "x")));
+    }
+
+    #[test]
+    fn footer_shows_close_for_active_local_sessions() {
+        let app = app_with_session(SessionSource::Local, SessionStatus::Running);
+
+        let shortcuts = footer_shortcuts(&app);
+
+        assert!(shortcuts.iter().any(|shortcut| shortcut == &("Close", "x")));
+    }
+
+    fn app_with_session(source: SessionSource, status: SessionStatus) -> App {
+        let session = CopilotSession {
+            id: "session".to_string(),
+            source,
+            cwd: std::path::PathBuf::from("/tmp"),
+            git_root: None,
+            repository: None,
+            branch: None,
+            summary: None,
+            last_agent_message: None,
+            user_named: false,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            status,
+            remote_state: None,
+            remote_url: None,
+            remote_user: None,
+            pull_request: None,
+            remote_log: None,
+        };
+        let mut app = App::new(
+            std::path::PathBuf::from("/tmp/copilot"),
+            std::path::PathBuf::from("/tmp"),
+        );
+        app.sessions = vec![session];
+        app.flat_list = vec![0];
+        app.selected_session = Some(0);
+        app
     }
 }

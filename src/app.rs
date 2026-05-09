@@ -602,8 +602,7 @@ impl App {
 
     pub fn close_selected_session(&mut self) {
         if let Some(idx) = self.selected_session.or_else(|| self.session_at_cursor()) {
-            if self.sessions[idx].source == SessionSource::Remote {
-                self.status_message = Some("Remote tasks cannot be closed from gh-pilot".into());
+            if !self.can_close_session(idx) {
                 return;
             }
             self.pending_action = PendingAction::CloseSession {
@@ -622,6 +621,12 @@ impl App {
 
     pub fn close_all_sessions(&mut self) {
         self.pending_action = PendingAction::CloseAllSessions;
+    }
+
+    pub fn can_close_session(&self, idx: usize) -> bool {
+        self.sessions.get(idx).is_some_and(|session| {
+            session.source == SessionSource::Local && session.status != SessionStatus::Idle
+        })
     }
 
     pub fn toggle_terminal_fullscreen(&mut self) {
@@ -1494,7 +1499,14 @@ mod tests {
 
     #[test]
     fn closing_local_session_queues_close_action() {
-        let mut app = app_with_sessions(vec![session("local", SessionSource::Local)]);
+        let mut app = app_with_sessions(vec![session_with_details(
+            "local",
+            SessionSource::Local,
+            "/tmp",
+            SessionStatus::Running,
+            None,
+            None,
+        )]);
 
         app.close_selected_session();
 
@@ -1505,16 +1517,22 @@ mod tests {
     }
 
     #[test]
-    fn closing_remote_session_shows_status_without_queueing_close_action() {
+    fn closing_remote_session_does_not_queue_close_action() {
         let mut app = app_with_sessions(vec![session("remote", SessionSource::Remote)]);
 
         app.close_selected_session();
 
         assert!(matches!(app.pending_action, PendingAction::None));
-        assert_eq!(
-            app.status_message.as_deref(),
-            Some("Remote tasks cannot be closed from gh-pilot")
-        );
+        assert!(app.status_message.is_none());
+    }
+
+    #[test]
+    fn closing_idle_local_session_does_not_queue_close_action() {
+        let mut app = app_with_sessions(vec![session("local", SessionSource::Local)]);
+
+        app.close_selected_session();
+
+        assert!(matches!(app.pending_action, PendingAction::None));
     }
 
     #[test]
