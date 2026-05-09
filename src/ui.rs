@@ -92,11 +92,20 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(35), Constraint::Percentage(65)])
         .split(area);
-    draw_sessions_panel(f, app, cols[0]);
+    draw_session_list(f, app, cols[0]);
     draw_detail_panel(f, app, cols[1]);
 }
 
 // ── Sessions panel (left) ─────────────────────────────────────────────────────
+
+fn draw_session_list(f: &mut Frame, app: &mut App, area: Rect) {
+    let content = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(4), Constraint::Min(0)])
+        .split(area);
+    draw_session_filter_pane(f, app, content[0]);
+    draw_sessions_panel(f, app, content[1]);
+}
 
 fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
     let is_focused = app.active_panel == Panel::Sessions;
@@ -119,13 +128,7 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
 
     let inner = block.inner(area);
     f.render_widget(block, area);
-
-    let content = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(4), Constraint::Min(0)])
-        .split(inner);
-    draw_session_filter_pane(f, app, content[0]);
-    let list_area = content[1];
+    let list_area = inner;
 
     if app.flat_list.is_empty() {
         let title = if app.sessions.is_empty() {
@@ -137,7 +140,7 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
             Line::from(Span::styled(title, Style::default().fg(MUTED_COLOR))),
             Line::from(Span::raw("")),
             Line::from(Span::styled(
-                "Press [/] to edit directory filters or [Tab] to switch status.",
+                "No sessions match the current filters.",
                 Style::default().fg(MUTED_COLOR),
             )),
         ]))
@@ -221,39 +224,37 @@ fn draw_session_filter_pane(f: &mut Frame, app: &App, area: Rect) {
             Span::raw(" "),
             filter_tab(
                 app.session_filter == SessionFilter::Running,
-                "● Running",
+                "●",
                 counts.running,
                 RUNNING_COLOR,
             ),
             Span::raw(" "),
             filter_tab(
                 app.session_filter == SessionFilter::Pending,
-                "● Pending",
+                "●",
                 counts.pending,
                 WAITING_COLOR,
             ),
             Span::raw(" "),
             filter_tab(
                 app.session_filter == SessionFilter::Remote,
-                "Remote",
+                "",
                 counts.remote,
-                ACCENT_COLOR,
+                REMOTE_COLOR,
             ),
         ]),
         Line::from(vec![
-            Span::styled("Dir: ", Style::default().fg(MUTED_COLOR)),
+            Span::styled("directory: ", Style::default().fg(MUTED_COLOR)),
             Span::styled(dir_filter, Style::default().fg(TEXT_COLOR)),
         ]),
-        Line::from(Span::styled(
-            "Tab: status  /: directory  Ctrl+U: clear",
-            Style::default().fg(MUTED_COLOR),
-        )),
     ];
 
     let pane = Paragraph::new(lines)
         .block(
             Block::default()
-                .borders(Borders::BOTTOM)
+                .title(" Filters ")
+                .title_style(Style::default().fg(MUTED_COLOR))
+                .borders(Borders::ALL)
                 .style(Style::default().bg(SURFACE_COLOR))
                 .border_style(Style::default().fg(MUTED_COLOR)),
         )
@@ -271,7 +272,7 @@ fn filter_tab(active: bool, label: &'static str, count: usize, color: Color) -> 
         Style::default().fg(color)
     };
 
-    Span::styled(format!(" {label} {count} "), style)
+    Span::styled(format!(" {label} ({count}) "), style)
 }
 
 fn active_prefix(prefix: &str, is_active: bool) -> Span<'static> {
