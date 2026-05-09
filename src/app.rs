@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 
 const DETAIL_PAGE_SCROLL_AMOUNT: usize = 5;
+const APP_TERMINAL_TITLE: &str = "gh pilot";
 
 // ── Enums ────────────────────────────────────────────────────────────────────
 
@@ -202,6 +203,12 @@ impl App {
 
     pub fn is_loading_sessions(&self) -> bool {
         self.sessions_loading
+    }
+
+    pub fn terminal_title(&self) -> String {
+        self.current_session_title()
+            .and_then(|title| sanitize_terminal_title_part(&title))
+            .unwrap_or_else(|| APP_TERMINAL_TITLE.to_string())
     }
 
     pub fn refresh_statuses(&mut self) -> bool {
@@ -690,6 +697,41 @@ impl App {
             self.directory_filter = launch_dir;
         }
     }
+
+    fn current_session_title(&self) -> Option<String> {
+        if let Some(terminal) = &self.embedded_terminal {
+            if let Some(title) = terminal
+                .terminal_title()
+                .filter(|title| !title.trim().is_empty())
+            {
+                return Some(title);
+            }
+            if let Some(session) = self
+                .sessions
+                .iter()
+                .find(|session| session.id == terminal.session_id)
+            {
+                return Some(session.display_name());
+            }
+            return Some(if terminal.session_id == "new" {
+                "New Copilot session".to_string()
+            } else {
+                terminal.session_id.clone()
+            });
+        }
+
+        self.selected_session
+            .map(|idx| self.sessions[idx].display_name())
+    }
+}
+
+fn sanitize_terminal_title_part(title: &str) -> Option<String> {
+    let sanitized: String = title
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    let sanitized = sanitized.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!sanitized.is_empty()).then(|| sanitized.to_string())
 }
 
 // ── Build flat list ───────────────────────────────────────────────────────────
@@ -878,6 +920,12 @@ mod tests {
         session_with_details(id, source, "/tmp", SessionStatus::Idle, None, None)
     }
 
+    fn session_with_summary(id: &str, summary: &str) -> CopilotSession {
+        let mut session = session(id, SessionSource::Local);
+        session.summary = Some(summary.to_string());
+        session
+    }
+
     fn session_with_details(
         id: &str,
         source: SessionSource,
@@ -905,6 +953,30 @@ mod tests {
             pull_request: None,
             remote_log: None,
         }
+    }
+
+    #[test]
+    fn terminal_title_defaults_to_app_title_without_selection() {
+        let app = app_with_sessions(vec![]);
+
+        assert_eq!(app.terminal_title(), "gh pilot");
+    }
+
+    #[test]
+    fn terminal_title_uses_selected_session_name() {
+        let app = app_with_sessions(vec![session_with_summary("session-1", "Fix title display")]);
+
+        assert_eq!(app.terminal_title(), "Fix title display");
+    }
+
+    #[test]
+    fn terminal_title_sanitizes_control_characters() {
+        let app = app_with_sessions(vec![session_with_summary(
+            "session-1",
+            "Fix \u{1b}]0;spoofed\u{7}title",
+        )]);
+
+        assert_eq!(app.terminal_title(), "Fix ]0;spoofed title");
     }
 
     #[test]

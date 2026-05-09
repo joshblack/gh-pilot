@@ -11,7 +11,9 @@ use crossterm::{
         MouseEvent, MouseEventKind,
     },
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{
+        disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen, SetTitle,
+    },
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 use session::copilot_binary;
@@ -57,7 +59,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn run_event_loop<B: ratatui::backend::Backend>(
+fn run_event_loop<B: ratatui::backend::Backend + Write>(
     terminal: &mut Terminal<B>,
     app: &mut App,
 ) -> Result<()>
@@ -69,11 +71,13 @@ where
     let mut status_since: Option<Instant> = None;
     let mut last_new_session_reload_check: Option<Instant> = None;
     let mut last_status_poll = Instant::now();
+    let mut last_terminal_title = String::new();
 
     loop {
         app.poll_session_loads();
         app.poll_remote_log_loads();
         resize_embedded_terminal(app, terminal.size()?);
+        update_terminal_title(terminal, app, &mut last_terminal_title)?;
         terminal.draw(|f| ui::draw(f, app))?;
 
         // ── Spawn pending embedded terminals ─────────────────────────────────
@@ -240,6 +244,22 @@ where
         }
     }
 
+    Ok(())
+}
+
+fn update_terminal_title<B: ratatui::backend::Backend + Write>(
+    terminal: &mut Terminal<B>,
+    app: &App,
+    last_terminal_title: &mut String,
+) -> Result<()>
+where
+    B::Error: Send + Sync + 'static,
+{
+    let title = app.terminal_title();
+    if title != *last_terminal_title {
+        execute!(terminal.backend_mut(), SetTitle(&title)).context("Failed to update title")?;
+        *last_terminal_title = title;
+    }
     Ok(())
 }
 
