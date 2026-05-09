@@ -853,7 +853,7 @@ fn render_vt100_screen(f: &mut Frame, term: &crate::terminal::EmbeddedTerminal, 
 }
 
 fn cell_to_ratatui_style(cell: &vt100::Cell) -> Style {
-    let fg = vt100_color_to_ratatui(cell.fgcolor());
+    let fg = vt100_fg_color_to_ratatui(cell.fgcolor(), cell.dim());
     let bg = vt100_color_to_ratatui(cell.bgcolor());
     let mut style = Style::default().fg(fg).bg(bg);
     if cell.bold() {
@@ -874,11 +874,78 @@ fn cell_to_ratatui_style(cell: &vt100::Cell) -> Style {
     style
 }
 
+fn vt100_fg_color_to_ratatui(color: vt100::Color, dim: bool) -> Color {
+    if dim {
+        return dim_vt100_color(color);
+    }
+
+    vt100_color_to_ratatui(color)
+}
+
 fn vt100_color_to_ratatui(color: vt100::Color) -> Color {
     match color {
         vt100::Color::Default => Color::Reset,
         vt100::Color::Idx(n) => Color::Indexed(n),
         vt100::Color::Rgb(r, g, b) => Color::Rgb(r, g, b),
+    }
+}
+
+fn dim_vt100_color(color: vt100::Color) -> Color {
+    match color {
+        vt100::Color::Default => MUTED_COLOR,
+        vt100::Color::Idx(n) => {
+            let (r, g, b) = xterm_indexed_color(n);
+            dim_rgb(r, g, b)
+        }
+        vt100::Color::Rgb(r, g, b) => dim_rgb(r, g, b),
+    }
+}
+
+fn dim_rgb(r: u8, g: u8, b: u8) -> Color {
+    Color::Rgb(r / 2, g / 2, b / 2)
+}
+
+fn xterm_indexed_color(index: u8) -> (u8, u8, u8) {
+    const ANSI_COLORS: [(u8, u8, u8); 16] = [
+        (0x00, 0x00, 0x00),
+        (0x80, 0x00, 0x00),
+        (0x00, 0x80, 0x00),
+        (0x80, 0x80, 0x00),
+        (0x00, 0x00, 0x80),
+        (0x80, 0x00, 0x80),
+        (0x00, 0x80, 0x80),
+        (0xc0, 0xc0, 0xc0),
+        (0x80, 0x80, 0x80),
+        (0xff, 0x00, 0x00),
+        (0x00, 0xff, 0x00),
+        (0xff, 0xff, 0x00),
+        (0x00, 0x00, 0xff),
+        (0xff, 0x00, 0xff),
+        (0x00, 0xff, 0xff),
+        (0xff, 0xff, 0xff),
+    ];
+
+    if let Some(color) = ANSI_COLORS.get(index as usize) {
+        return *color;
+    }
+
+    if index >= 232 {
+        let level = 8 + (index - 232) * 10;
+        return (level, level, level);
+    }
+
+    let index = index - 16;
+    let r = xterm_color_cube_level(index / 36);
+    let g = xterm_color_cube_level((index / 6) % 6);
+    let b = xterm_color_cube_level(index % 6);
+    (r, g, b)
+}
+
+fn xterm_color_cube_level(value: u8) -> u8 {
+    if value == 0 {
+        0
+    } else {
+        55 + value * 40
     }
 }
 
@@ -1226,5 +1293,21 @@ mod tests {
         let style = cell_to_ratatui_style(cell);
 
         assert!(style.add_modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
+    fn vt100_default_dim_foreground_maps_to_muted_color() {
+        assert_eq!(
+            vt100_fg_color_to_ratatui(vt100::Color::Default, true),
+            MUTED_COLOR
+        );
+    }
+
+    #[test]
+    fn vt100_dim_indexed_foreground_maps_to_darker_rgb_color() {
+        assert_eq!(
+            vt100_fg_color_to_ratatui(vt100::Color::Idx(15), true),
+            Color::Rgb(0x7f, 0x7f, 0x7f)
+        );
     }
 }
