@@ -4,7 +4,7 @@ use crate::session::{
 };
 use crate::terminal::EmbeddedTerminal;
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 
 const DETAIL_PAGE_SCROLL_AMOUNT: usize = 5;
@@ -570,13 +570,71 @@ fn matches_session_filter(session: &CopilotSession, session_filter: SessionFilte
 }
 
 fn matches_directory_filter(session: &CopilotSession, directory_filter: &str) -> bool {
-    let filter = directory_filter.trim().to_ascii_lowercase();
-    filter.is_empty()
+    let filters = directory_filter_candidates(directory_filter);
+    filters.is_empty()
+        || filters
+            .iter()
+            .any(|filter| session_matches_directory_filter(session, filter))
+}
+
+fn session_matches_directory_filter(session: &CopilotSession, filter: &str) -> bool {
+    path_matches_filter(&session.cwd, filter)
         || session
-            .cwd
-            .to_string_lossy()
-            .to_ascii_lowercase()
-            .contains(&filter)
+            .git_root
+            .as_ref()
+            .is_some_and(|git_root| path_matches_filter(git_root, filter))
+        || session
+            .repository
+            .as_ref()
+            .is_some_and(|repository| repository_matches_filter(repository, filter))
+}
+
+fn path_matches_filter(path: &Path, filter: &str) -> bool {
+    normalize_filter_text(&path.to_string_lossy()).contains(filter)
+}
+
+fn repository_matches_filter(repository: &str, filter: &str) -> bool {
+    let repository = normalize_filter_text(repository);
+    repository.contains(filter) || filter.contains(&repository)
+}
+
+fn directory_filter_candidates(directory_filter: &str) -> Vec<String> {
+    let filter = directory_filter.trim();
+    if filter.is_empty() {
+        return Vec::new();
+    }
+
+    let mut candidates = vec![normalize_filter_text(filter)];
+    if let Some(expanded) = expand_home_directory_filter(filter) {
+        let expanded = normalize_filter_text(&expanded.to_string_lossy());
+        if !candidates.contains(&expanded) {
+            candidates.push(expanded);
+        }
+    }
+    candidates
+}
+
+fn expand_home_directory_filter(filter: &str) -> Option<PathBuf> {
+    if filter == "~" {
+        return dirs::home_dir();
+    }
+
+    let rest = filter
+        .strip_prefix("~/")
+        .or_else(|| filter.strip_prefix("~\\"))?;
+    dirs::home_dir().map(|home| home.join(rest))
+}
+
+fn normalize_filter_text(value: &str) -> String {
+    let normalized = value
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_ascii_lowercase();
+    if normalized.is_empty() {
+        value.to_ascii_lowercase()
+    } else {
+        normalized
+    }
 }
 
 fn is_remote_session(session: &CopilotSession) -> bool {
@@ -734,6 +792,46 @@ mod tests {
                 pending: 1,
                 remote: 0,
             }
+        );
+    }
+
+    #[test]
+    fn directory_filter_expands_home_prefix() {
+        let home = dirs::home_dir().expect("home directory should be available");
+        let cwd = home.join("gh/primer/react");
+        let sessions = vec![session_with_details(
+            "local",
+            SessionSource::Local,
+            cwd.to_str().expect("path should be utf-8"),
+            SessionStatus::Idle,
+            None,
+            Some("primer/react"),
+        )];
+
+        assert_eq!(
+            build_flat_list(&sessions, SessionFilter::All, "~/gh/primer/react"),
+            vec![0]
+        );
+    }
+
+    #[test]
+    fn directory_filter_matches_remote_session_repository() {
+        let sessions = vec![session_with_details(
+            "remote",
+            SessionSource::Remote,
+            "primer/react",
+            SessionStatus::Idle,
+            None,
+            Some("primer/react"),
+        )];
+
+        assert_eq!(
+            build_flat_list(
+                &sessions,
+                SessionFilter::Remote,
+                "/Users/octocat/gh/primer/react"
+            ),
+            vec![0]
         );
     }
 

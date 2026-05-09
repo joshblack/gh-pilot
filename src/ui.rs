@@ -244,7 +244,7 @@ fn draw_session_filter_pane(f: &mut Frame, app: &App, area: Rect) {
             ),
         ]),
         Line::from(vec![
-            Span::styled("directory: ", Style::default().fg(MUTED_COLOR)),
+            Span::styled("Directory: ", Style::default().fg(MUTED_COLOR)),
             Span::styled(dir_filter, Style::default().fg(TEXT_COLOR)),
         ]),
     ];
