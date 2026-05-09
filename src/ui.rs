@@ -115,8 +115,13 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
         Style::default().fg(MUTED_COLOR)
     };
 
+    let title = if app.is_loading_sessions() {
+        " Sessions (loading…) "
+    } else {
+        " Sessions "
+    };
     let block = Block::default()
-        .title(" Sessions ")
+        .title(title)
         .title_style(
             Style::default()
                 .fg(ACCENT_COLOR)
@@ -131,18 +136,22 @@ fn draw_sessions_panel(f: &mut Frame, app: &mut App, area: Rect) {
     let list_area = inner;
 
     if app.flat_list.is_empty() {
-        let title = if app.sessions.is_empty() {
+        let title = if app.is_loading_sessions() {
+            "Loading Copilot sessions…"
+        } else if app.sessions.is_empty() {
             "No Copilot sessions found."
         } else {
             "No sessions match the active filters."
         };
+        let description = if app.is_loading_sessions() {
+            "Reading local sessions and remote agent tasks."
+        } else {
+            "No sessions match the current filters."
+        };
         let msg = Paragraph::new(Text::from(vec![
             Line::from(Span::styled(title, Style::default().fg(MUTED_COLOR))),
             Line::from(Span::raw("")),
-            Line::from(Span::styled(
-                "No sessions match the current filters.",
-                Style::default().fg(MUTED_COLOR),
-            )),
+            Line::from(Span::styled(description, Style::default().fg(MUTED_COLOR))),
         ]))
         .style(Style::default().bg(SURFACE_COLOR))
         .alignment(Alignment::Center);
@@ -412,16 +421,21 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
             .border_style(border_style);
         let inner = block.inner(area);
         f.render_widget(block, area);
-        let msg = Paragraph::new(Text::from(vec![
-            Line::from(Span::styled(
+        let (title, description) = if app.is_loading_sessions() {
+            (
+                "Loading session details…",
+                "Sessions will appear here as soon as they are ready.",
+            )
+        } else {
+            (
                 "Select a session with j/k + Enter",
-                Style::default().fg(MUTED_COLOR),
-            )),
-            Line::from(Span::raw("")),
-            Line::from(Span::styled(
                 "Press [o] to open a live terminal session",
-                Style::default().fg(MUTED_COLOR),
-            )),
+            )
+        };
+        let msg = Paragraph::new(Text::from(vec![
+            Line::from(Span::styled(title, Style::default().fg(MUTED_COLOR))),
+            Line::from(Span::raw("")),
+            Line::from(Span::styled(description, Style::default().fg(MUTED_COLOR))),
         ]))
         .style(Style::default().bg(SURFACE_COLOR))
         .alignment(Alignment::Center);
@@ -1057,11 +1071,16 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn footer_text(app: &App) -> String {
-    footer_shortcuts(app)
+    let shortcuts = footer_shortcuts(app)
         .into_iter()
         .map(|(action, key)| format!("{action}: {key}"))
         .collect::<Vec<_>>()
-        .join("  ")
+        .join("  ");
+    if app.is_loading_sessions() {
+        format!("Loading sessions…  {shortcuts}")
+    } else {
+        shortcuts
+    }
 }
 
 fn footer_shortcuts(app: &App) -> Vec<(&'static str, &'static str)> {

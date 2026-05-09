@@ -124,22 +124,26 @@ pub struct App {
     remote_log_receiver: Receiver<(String, String)>,
     /// Remote session IDs whose logs are currently loading in the background.
     remote_logs_loading: HashSet<String>,
+    /// Sends completed session loads from background workers to the main loop.
+    session_load_sender: Sender<(u64, Vec<CopilotSession>)>,
+    /// Receives completed session loads without blocking startup or rendering.
+    session_load_receiver: Receiver<(u64, Vec<CopilotSession>)>,
+    /// Whether a session list load is currently in flight.
+    sessions_loading: bool,
+    /// Monotonically increasing token used to ignore stale background loads.
+    session_load_generation: u64,
 }
 
 impl App {
     pub fn new(copilot_dir: PathBuf, launch_dir: PathBuf) -> Self {
-        let sessions = load_sessions(&copilot_dir);
-        let flat_list = build_flat_list(&sessions, SessionFilter::All, "");
-
-        let selected_session = flat_list.first().copied();
-        let cursor = 0;
         let (remote_log_sender, remote_log_receiver) = mpsc::channel();
+        let (session_load_sender, session_load_receiver) = mpsc::channel();
 
         App {
-            sessions,
-            flat_list,
-            cursor,
-            selected_session,
+            sessions: Vec::new(),
+            flat_list: Vec::new(),
+            cursor: 0,
+            selected_session: None,
             active_panel: Panel::Sessions,
             copilot_dir,
             launch_dir,
@@ -160,11 +164,36 @@ impl App {
             remote_log_sender,
             remote_log_receiver,
             remote_logs_loading: HashSet::new(),
+            session_load_sender,
+            session_load_receiver,
+            sessions_loading: false,
+            session_load_generation: 0,
         }
     }
 
     pub fn reload(&mut self) {
-        self.replace_sessions(load_sessions(&self.copilot_dir));
+        self.session_load_generation = self.session_load_generation.wrapping_add(1);
+        self.sessions_loading = true;
+        let generation = self.session_load_generation;
+        let copilot_dir = self.copilot_dir.clone();
+        let sender = self.session_load_sender.clone();
+        std::thread::spawn(move || {
+            let sessions = load_sessions(&copilot_dir);
+            drop(sender.send((generation, sessions)));
+        });
+    }
+
+    pub fn poll_session_loads(&mut self) {
+        while let Ok((generation, sessions)) = self.session_load_receiver.try_recv() {
+            if generation == self.session_load_generation {
+                self.sessions_loading = false;
+                self.replace_sessions(sessions);
+            }
+        }
+    }
+
+    pub fn is_loading_sessions(&self) -> bool {
+        self.sessions_loading
     }
 
     pub fn refresh_statuses(&mut self) -> bool {
@@ -259,6 +288,8 @@ impl App {
             .find(|session| !baseline.contains(&session.id))
             .map(|session| session.id.clone())?;
 
+        self.session_load_generation = self.session_load_generation.wrapping_add(1);
+        self.sessions_loading = false;
         self.new_session_reload_baseline = None;
         self.replace_sessions(sessions);
         Some(new_session_id)
@@ -664,6 +695,7 @@ mod tests {
 
     fn app_with_sessions(sessions: Vec<CopilotSession>) -> App {
         let (remote_log_sender, remote_log_receiver) = mpsc::channel();
+        let (session_load_sender, session_load_receiver) = mpsc::channel();
         let flat_list = build_flat_list(&sessions, SessionFilter::All, "");
         let selected_session = flat_list.first().copied();
         App {
@@ -691,6 +723,10 @@ mod tests {
             remote_log_sender,
             remote_log_receiver,
             remote_logs_loading: HashSet::new(),
+            session_load_sender,
+            session_load_receiver,
+            sessions_loading: false,
+            session_load_generation: 0,
         }
     }
 
@@ -864,6 +900,43 @@ mod tests {
         )];
 
         assert!(build_flat_list(&sessions, SessionFilter::Remote, "/tmp/react/src").is_empty());
+    }
+
+    #[test]
+    fn app_new_starts_with_empty_non_loading_session_list() {
+        let app = App::new(PathBuf::from("/tmp/copilot"), PathBuf::from("/tmp"));
+
+        assert!(app.sessions.is_empty());
+        assert!(app.flat_list.is_empty());
+        assert_eq!(app.selected_session, None);
+        assert!(!app.is_loading_sessions());
+    }
+
+    #[test]
+    fn reload_starts_background_session_load() {
+        let mut app = App::new(PathBuf::from("/tmp/copilot"), PathBuf::from("/tmp"));
+
+        app.reload();
+
+        assert!(app.is_loading_sessions());
+    }
+
+    #[test]
+    fn poll_session_loads_replaces_sessions() {
+        let mut app = App::new(PathBuf::from("/tmp/copilot"), PathBuf::from("/tmp"));
+        app.sessions_loading = true;
+        app.session_load_sender
+            .send((
+                app.session_load_generation,
+                vec![session("local", SessionSource::Local)],
+            ))
+            .unwrap();
+
+        app.poll_session_loads();
+
+        assert!(!app.is_loading_sessions());
+        assert_eq!(app.sessions.len(), 1);
+        assert_eq!(app.selected_session, Some(0));
     }
 
     #[test]

@@ -36,6 +36,7 @@ fn main() -> Result<()> {
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend).context("Failed to create terminal")?;
     terminal.clear()?;
+    app.reload();
 
     let result = run_event_loop(&mut terminal, &mut app);
 
@@ -70,6 +71,7 @@ where
     let mut last_status_poll = Instant::now();
 
     loop {
+        app.poll_session_loads();
         app.poll_remote_log_loads();
         resize_embedded_terminal(app, terminal.size()?);
         terminal.draw(|f| ui::draw(f, app))?;
