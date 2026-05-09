@@ -822,7 +822,7 @@ fn footer_shortcuts(app: &App) -> Vec<(&'static str, &'static str)> {
                     if app.collapsed_groups.contains(path) {
                         shortcuts.push(("Expand dir", "Enter"));
                     } else {
-                        shortcuts.push(("Expand/collapse", "Enter"));
+                        shortcuts.push(("Collapse dir", "Enter"));
                     }
                     shortcuts.push(("Focus dir", "f"));
                 }
@@ -872,7 +872,7 @@ fn draw_input_popup(f: &mut Frame, title: &str, input: &str, area: Rect) {
     );
 }
 
-fn draw_help_popup(f: &mut Frame, app: &mut App, area: Rect) {
+fn draw_help_popup(f: &mut Frame, app: &App, area: Rect) {
     let popup_height = area.height.saturating_sub(4).clamp(1, 24);
     let popup = centered_rect(70, popup_height, area);
     f.render_widget(Clear, popup);
@@ -894,18 +894,16 @@ fn draw_help_popup(f: &mut Frame, app: &mut App, area: Rect) {
     let total_lines = lines.len();
     let visible_height = inner.height as usize;
     let max_scroll = total_lines.saturating_sub(visible_height);
-    if app.help_scroll > max_scroll {
-        app.help_scroll = max_scroll;
-    }
+    let help_scroll = app.help_scroll.min(max_scroll);
 
     let help = Paragraph::new(Text::from(lines))
         .style(Style::default().bg(SURFACE_COLOR))
-        .scroll((app.help_scroll as u16, 0))
+        .scroll((help_scroll as u16, 0))
         .wrap(Wrap { trim: false });
     f.render_widget(help, inner);
 
     if total_lines > visible_height {
-        let mut scroll_state = ScrollbarState::new(total_lines).position(app.help_scroll);
+        let mut scroll_state = ScrollbarState::new(total_lines).position(help_scroll);
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(Some("↑"))
             .end_symbol(Some("↓"));
