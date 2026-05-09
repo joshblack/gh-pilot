@@ -12,6 +12,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Keep generated tmux session names compact and safely below common terminal UI limits.
 const TMUX_SESSION_NAME_MAX_LEN: usize = 80;
+const TMUX_TITLE_CACHE_DURATION: Duration = Duration::from_millis(250);
 pub(crate) const TMUX_SESSION_PREFIX: &str = "ghpilot_";
 pub(crate) type TerminalParser = vt100::Parser<TerminalCallbacks>;
 
@@ -203,13 +204,12 @@ impl EmbeddedTerminal {
     }
 
     fn tmux_terminal_title(&self) -> Option<String> {
-        let mut cache = self
-            .tmux_title
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let Ok(mut cache) = self.tmux_title.lock() else {
+            return None;
+        };
         if cache
             .last_checked
-            .map(|last_checked| last_checked.elapsed() < Duration::from_millis(250))
+            .map(|last_checked| last_checked.elapsed() < TMUX_TITLE_CACHE_DURATION)
             .unwrap_or(false)
         {
             return cache.value.clone();
