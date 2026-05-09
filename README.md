@@ -29,6 +29,10 @@ A **terminal session manager for AI coding agents** — a `gh` extension written
 gh extension install joshblack/gh-mission-control
 ```
 
+`gh extension install` downloads the prebuilt binary from the latest GitHub
+Release for your platform. Releases are published automatically when a `v*` tag
+is pushed.
+
 Then run:
 
 ```sh
