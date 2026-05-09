@@ -107,6 +107,7 @@ pub struct App {
     pub directory_filter: String,
     directory_filter_history: Vec<String>,
     directory_suggestion_cursor: Option<usize>,
+    initial_directory_filter_applied: bool,
     pub detail_scroll: usize,
     pub help_scroll: usize,
     pub should_quit: bool,
@@ -155,6 +156,7 @@ impl App {
             directory_filter: String::new(),
             directory_filter_history: Vec::new(),
             directory_suggestion_cursor: None,
+            initial_directory_filter_applied: false,
             detail_scroll: 0,
             help_scroll: 0,
             should_quit: false,
@@ -244,6 +246,7 @@ impl App {
         self.notified_waiting_sessions
             .retain(|id| session_ids.contains(id.as_str()));
         self.status_cache.retain_sessions(&session_ids);
+        self.apply_initial_directory_filter();
         self.flat_list =
             build_flat_list(&self.sessions, self.session_filter, &self.directory_filter);
 
@@ -654,6 +657,26 @@ impl App {
         self.selected_session = self.session_at_cursor();
         self.detail_scroll = 0;
     }
+
+    fn apply_initial_directory_filter(&mut self) {
+        if self.initial_directory_filter_applied {
+            return;
+        }
+        self.initial_directory_filter_applied = true;
+
+        if !self.directory_filter.trim().is_empty() {
+            return;
+        }
+
+        let launch_dir = self.launch_dir.to_string_lossy().to_string();
+        if self
+            .sessions
+            .iter()
+            .any(|session| matches_directory_filter(session, &launch_dir))
+        {
+            self.directory_filter = launch_dir;
+        }
+    }
 }
 
 // ── Build flat list ───────────────────────────────────────────────────────────
@@ -817,6 +840,7 @@ mod tests {
             directory_filter: String::new(),
             directory_filter_history: Vec::new(),
             directory_suggestion_cursor: None,
+            initial_directory_filter_applied: false,
             detail_scroll: 0,
             help_scroll: 0,
             should_quit: false,
@@ -1131,6 +1155,113 @@ mod tests {
         assert!(!app.is_loading_sessions());
         assert_eq!(app.sessions.len(), 1);
         assert_eq!(app.selected_session, Some(0));
+    }
+
+    #[test]
+    fn first_session_load_defaults_directory_filter_to_launch_dir_when_sessions_match() {
+        let mut app = App::new(
+            PathBuf::from("/tmp/copilot"),
+            PathBuf::from("/work/project"),
+        );
+        app.replace_sessions(vec![
+            session_with_details(
+                "matching",
+                SessionSource::Local,
+                "/work/project",
+                SessionStatus::Idle,
+                None,
+                None,
+            ),
+            session_with_details(
+                "other",
+                SessionSource::Local,
+                "/work/other",
+                SessionStatus::Idle,
+                None,
+                None,
+            ),
+        ]);
+
+        assert_eq!(app.directory_filter, "/work/project");
+        assert_eq!(app.flat_list, vec![0]);
+    }
+
+    #[test]
+    fn first_session_load_keeps_empty_directory_filter_without_launch_dir_matches() {
+        let mut app = App::new(
+            PathBuf::from("/tmp/copilot"),
+            PathBuf::from("/work/project"),
+        );
+        app.replace_sessions(vec![session_with_details(
+            "other",
+            SessionSource::Local,
+            "/work/other",
+            SessionStatus::Idle,
+            None,
+            None,
+        )]);
+
+        assert_eq!(app.directory_filter, "");
+        assert_eq!(app.flat_list, vec![0]);
+    }
+
+    #[test]
+    fn initial_directory_filter_does_not_replace_existing_filter() {
+        let mut app = App::new(
+            PathBuf::from("/tmp/copilot"),
+            PathBuf::from("/work/project"),
+        );
+        app.directory_filter = "/work/other".to_string();
+
+        app.replace_sessions(vec![
+            session_with_details(
+                "matching",
+                SessionSource::Local,
+                "/work/project",
+                SessionStatus::Idle,
+                None,
+                None,
+            ),
+            session_with_details(
+                "other",
+                SessionSource::Local,
+                "/work/other",
+                SessionStatus::Idle,
+                None,
+                None,
+            ),
+        ]);
+
+        assert_eq!(app.directory_filter, "/work/other");
+        assert_eq!(app.flat_list, vec![1]);
+    }
+
+    #[test]
+    fn initial_directory_filter_is_applied_only_once() {
+        let mut app = App::new(
+            PathBuf::from("/tmp/copilot"),
+            PathBuf::from("/work/project"),
+        );
+        app.replace_sessions(vec![session_with_details(
+            "other",
+            SessionSource::Local,
+            "/work/other",
+            SessionStatus::Idle,
+            None,
+            None,
+        )]);
+
+        app.replace_sessions(vec![session_with_details(
+            "matching",
+            SessionSource::Local,
+            "/work/project",
+            SessionStatus::Idle,
+            None,
+            None,
+        )]);
+
+        assert_eq!(app.directory_filter, "");
+        assert_eq!(app.flat_list, vec![0]);
     }
 
     #[test]
