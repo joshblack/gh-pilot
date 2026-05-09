@@ -208,12 +208,10 @@ where
 
         if event::poll(timeout).context("Event poll failed")? {
             match event::read().context("Event read failed")? {
-                Event::Key(key) => {
-                    if should_handle_key_event(key.kind) {
-                        handle_key(app, key.code, key.modifiers);
-                        if app.status_message.is_some() {
-                            status_since = Some(Instant::now());
-                        }
+                Event::Key(key) if should_handle_key_event(key.kind) => {
+                    handle_key(app, key.code, key.modifiers);
+                    if app.status_message.is_some() {
+                        status_since = Some(Instant::now());
                     }
                 }
                 Event::Mouse(mouse) => handle_mouse(app, mouse),

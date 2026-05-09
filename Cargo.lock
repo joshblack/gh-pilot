@@ -531,7 +531,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "gh-mission-control"
+name = "gh-pilot"
 version = "0.1.0"
 dependencies = [
  "anyhow",

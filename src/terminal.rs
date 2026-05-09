@@ -12,7 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Keep generated tmux session names compact and safely below common terminal UI limits.
 const TMUX_SESSION_NAME_MAX_LEN: usize = 80;
-pub(crate) const TMUX_SESSION_PREFIX: &str = "ghmc_";
+pub(crate) const TMUX_SESSION_PREFIX: &str = "ghpilot_";
 
 /// An embedded copilot terminal session running inside the right detail panel.
 pub struct EmbeddedTerminal {

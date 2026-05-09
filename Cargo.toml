@@ -1,12 +1,12 @@
 [package]
-name = "gh-mission-control"
+name = "gh-pilot"
 version = "0.1.0"
 edition = "2021"
 description = "Terminal session manager for AI coding agents (gh extension)"
 license = "MIT"
 
 [[bin]]
-name = "gh-mission-control"
+name = "gh-pilot"
 path = "src/main.rs"
 
 [dependencies]

@@ -61,7 +61,7 @@ pub struct App {
     pub active_panel: Panel,
     /// Root copilot config dir (default: `~/.copilot`).
     pub copilot_dir: PathBuf,
-    /// Directory where mission-control was launched (default for new sessions).
+    /// Directory where pilot was launched (default for new sessions).
     pub launch_dir: PathBuf,
     pub mode: Mode,
     pub input_buffer: String,

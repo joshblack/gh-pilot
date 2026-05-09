@@ -42,23 +42,23 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             asset_suffix: linux-amd64
-            binary_name: gh-mission-control
+            binary_name: gh-pilot
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             asset_suffix: linux-arm64
-            binary_name: gh-mission-control
+            binary_name: gh-pilot
           - os: macos-13
             target: x86_64-apple-darwin
             asset_suffix: darwin-amd64
-            binary_name: gh-mission-control
+            binary_name: gh-pilot
           - os: macos-14
             target: aarch64-apple-darwin
             asset_suffix: darwin-arm64
-            binary_name: gh-mission-control
+            binary_name: gh-pilot
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             asset_suffix: windows-amd64.exe
-            binary_name: gh-mission-control.exe
+            binary_name: gh-pilot.exe
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
@@ -82,7 +82,7 @@ jobs:
           TARGET: ${{ matrix.target }}
         run: |
           mkdir -p dist
-          cp "target/$TARGET/release/$BINARY_NAME" "dist/gh-mission-control_${TAG_NAME}_${ASSET_SUFFIX}"
+          cp "target/$TARGET/release/$BINARY_NAME" "dist/gh-pilot_${TAG_NAME}_${ASSET_SUFFIX}"
 
       - name: Upload extension binary
         shell: bash
