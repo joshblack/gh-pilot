@@ -1411,4 +1411,17 @@ mod tests {
         let normal_style = cell_to_ratatui_style(parser.screen().cell(0, 5).unwrap());
         assert!(!normal_style.add_modifier.contains(Modifier::DIM));
     }
+
+    #[test]
+    fn cell_style_preserves_vt100_text_attributes() {
+        let mut parser = vt100::Parser::new(1, 1, 0);
+
+        parser.process(b"\x1b[1;3;4;7mx");
+
+        let style = cell_to_ratatui_style(parser.screen().cell(0, 0).unwrap());
+        assert!(style.add_modifier.contains(Modifier::BOLD));
+        assert!(style.add_modifier.contains(Modifier::ITALIC));
+        assert!(style.add_modifier.contains(Modifier::UNDERLINED));
+        assert!(style.add_modifier.contains(Modifier::REVERSED));
+    }
 }

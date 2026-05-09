@@ -14,10 +14,28 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const TMUX_SESSION_NAME_MAX_LEN: usize = 80;
 pub(crate) const TMUX_SESSION_PREFIX: &str = "ghpilot_";
 
+pub(crate) type TerminalParser = vt100::Parser<TerminalCallbacks>;
+
+#[derive(Clone)]
+pub(crate) struct TerminalCallbacks {
+    progress_event: Arc<Mutex<Option<Vec<u8>>>>,
+}
+
+impl vt100::Callbacks for TerminalCallbacks {
+    fn unhandled_osc(&mut self, _: &mut vt100::Screen, params: &[&[u8]]) {
+        if let Some(sequence) = osc_progress_sequence(params) {
+            if let Ok(mut progress_event) = self.progress_event.lock() {
+                *progress_event = Some(sequence);
+            }
+        }
+    }
+}
+
 /// An embedded copilot terminal session running inside the right detail panel.
 pub struct EmbeddedTerminal {
     /// Shared vt100 screen state updated by the background reader thread.
-    pub parser: Arc<Mutex<vt100::Parser>>,
+    parser: Arc<Mutex<TerminalParser>>,
+    progress_event: Arc<Mutex<Option<Vec<u8>>>>,
     /// Write bytes (keyboard input) into the PTY master.
     writer: Mutex<Box<dyn std::io::Write + Send>>,
     /// Set to `true` by the reader thread when the child process exits.
@@ -118,7 +136,15 @@ impl EmbeddedTerminal {
         let writer = master.take_writer()?;
         let reader = master.try_clone_reader()?;
 
-        let parser = Arc::new(Mutex::new(vt100::Parser::new(rows, cols, 1000)));
+        let progress_event = Arc::new(Mutex::new(None));
+        let parser = Arc::new(Mutex::new(vt100::Parser::new_with_callbacks(
+            rows,
+            cols,
+            1000,
+            TerminalCallbacks {
+                progress_event: Arc::clone(&progress_event),
+            },
+        )));
         let child_exited = Arc::new(AtomicBool::new(false));
 
         // Background reader: feeds raw PTY bytes into the vt100 parser.
@@ -145,6 +171,7 @@ impl EmbeddedTerminal {
 
         Ok(Self {
             parser,
+            progress_event,
             writer: Mutex::new(writer),
             child_exited,
             session_id,
@@ -184,8 +211,21 @@ impl EmbeddedTerminal {
         self.cols = cols;
     }
 
-    pub fn parser(&self) -> MutexGuard<'_, vt100::Parser> {
+    pub(crate) fn parser(&self) -> MutexGuard<'_, TerminalParser> {
         lock_parser(&self.parser)
+    }
+
+    pub(crate) fn take_progress_event(&self) -> Option<Vec<u8>> {
+        self.progress_event
+            .lock()
+            .ok()
+            .and_then(|mut progress_event| progress_event.take())
+    }
+
+    pub(crate) fn clear_progress_event(&self) {
+        if let Ok(mut progress_event) = self.progress_event.lock() {
+            *progress_event = None;
+        }
     }
 
     /// Rename the backing tmux session to the deterministic name for `session_id`.
@@ -223,10 +263,30 @@ impl EmbeddedTerminal {
     }
 }
 
-fn lock_parser(parser: &Mutex<vt100::Parser>) -> MutexGuard<'_, vt100::Parser> {
+fn lock_parser(parser: &Mutex<TerminalParser>) -> MutexGuard<'_, TerminalParser> {
     parser
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn osc_progress_sequence(params: &[&[u8]]) -> Option<Vec<u8>> {
+    if !(3..=4).contains(&params.len()) || params[0] != b"9" || params[1] != b"4" {
+        return None;
+    }
+
+    for param in &params[2..] {
+        if param.is_empty() || param.len() > 3 || !param.iter().all(u8::is_ascii_digit) {
+            return None;
+        }
+    }
+
+    let mut sequence = b"\x1b]9;4".to_vec();
+    for param in &params[2..] {
+        sequence.push(b';');
+        sequence.extend_from_slice(param);
+    }
+    sequence.push(b'\x07');
+    Some(sequence)
 }
 
 fn tmux_has_session(tmux_session: &str) -> bool {
@@ -354,4 +414,39 @@ pub fn mouse_to_bytes(event: MouseEvent) -> Vec<u8> {
         event.row.saturating_add(1)
     )
     .into_bytes()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn captures_osc_progress_event() {
+        let progress_event = Arc::new(Mutex::new(None));
+        let mut parser = vt100::Parser::new_with_callbacks(
+            1,
+            1,
+            0,
+            TerminalCallbacks {
+                progress_event: Arc::clone(&progress_event),
+            },
+        );
+
+        parser.process(b"\x1b]9;4;1;50\x07");
+
+        assert_eq!(
+            *progress_event.lock().unwrap(),
+            Some(b"\x1b]9;4;1;50\x07".to_vec())
+        );
+    }
+
+    #[test]
+    fn ignores_non_progress_osc_events() {
+        assert_eq!(osc_progress_sequence(&[b"2", b"title"]), None);
+    }
+
+    #[test]
+    fn rejects_non_numeric_progress_params() {
+        assert_eq!(osc_progress_sequence(&[b"9", b"4", b"1", b"50\x1b"]), None);
+    }
 }

@@ -23,6 +23,8 @@ use std::{
 };
 use terminal::{key_to_bytes, mouse_to_bytes, EmbeddedTerminal};
 
+const CLEAR_TERMINAL_PROGRESS: &[u8] = b"\x1b]9;4;0;0\x07";
+
 fn main() -> Result<()> {
     let copilot_dir = session::copilot_dir();
     let launch_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -69,12 +71,14 @@ where
     let mut status_since: Option<Instant> = None;
     let mut last_new_session_reload_check: Option<Instant> = None;
     let mut last_status_poll = Instant::now();
+    let mut terminal_progress_visible = false;
 
     loop {
         app.poll_session_loads();
         app.poll_remote_log_loads();
         resize_embedded_terminal(app, terminal.size()?);
         terminal.draw(|f| ui::draw(f, app))?;
+        forward_terminal_progress(app, &mut terminal_progress_visible);
 
         // ── Spawn pending embedded terminals ─────────────────────────────────
         let action = std::mem::replace(&mut app.pending_action, PendingAction::None);
@@ -238,12 +242,53 @@ where
         }
     }
 
+    if terminal_progress_visible {
+        write_terminal_progress(CLEAR_TERMINAL_PROGRESS);
+    }
+
     Ok(())
 }
 
 fn notify_waiting_agent() {
     let _ = io::stdout().write_all(b"\x07");
     let _ = io::stdout().flush();
+}
+
+fn forward_terminal_progress(app: &App, progress_visible: &mut bool) {
+    if let Some(event) = terminal_progress_event(app, progress_visible) {
+        write_terminal_progress(&event);
+    }
+}
+
+fn write_terminal_progress(event: &[u8]) {
+    let _ = io::stdout().write_all(event);
+    let _ = io::stdout().flush();
+}
+
+fn terminal_progress_event(app: &App, progress_visible: &mut bool) -> Option<Vec<u8>> {
+    if let Some(term) = app.embedded_terminal.as_ref() {
+        if app.mode == Mode::Terminal && app.terminal_fullscreen {
+            let event = term.take_progress_event();
+            if let Some(ref event) = event {
+                *progress_visible = !is_terminal_progress_clear(event);
+            }
+            return event;
+        }
+
+        term.clear_progress_event();
+    }
+
+    if *progress_visible {
+        *progress_visible = false;
+        return Some(CLEAR_TERMINAL_PROGRESS.to_vec());
+    }
+
+    None
+}
+
+fn is_terminal_progress_clear(event: &[u8]) -> bool {
+    matches!(event.get(b"\x1b]9;4;0".len()), Some(b';') | Some(b'\x07'))
+        && event.starts_with(b"\x1b]9;4;0")
 }
 
 fn open_url_in_browser(url: &str) -> Result<()> {
@@ -526,5 +571,12 @@ mod tests {
             assert_eq!(program, "xdg-open");
             assert_eq!(args, vec![url]);
         }
+    }
+
+    #[test]
+    fn identifies_terminal_progress_clear_events() {
+        assert!(is_terminal_progress_clear(b"\x1b]9;4;0\x07"));
+        assert!(is_terminal_progress_clear(b"\x1b]9;4;0;0\x07"));
+        assert!(!is_terminal_progress_clear(b"\x1b]9;4;1;50\x07"));
     }
 }
