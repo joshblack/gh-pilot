@@ -18,6 +18,7 @@ const IDLE_COLOR: Color = Color::Rgb(0x56, 0x5f, 0x89);
 const ERROR_COLOR: Color = Color::Rgb(0xf7, 0x76, 0x8e);
 const ACCENT_COLOR: Color = Color::Rgb(0x7a, 0xa2, 0xf7);
 const REMOTE_COLOR: Color = Color::Rgb(0xbb, 0x9a, 0xf7);
+const TERMINAL_COLOR: Color = Color::Rgb(0x7d, 0xcf, 0xff);
 const BACKGROUND_COLOR: Color = Color::Rgb(0x1a, 0x1b, 0x26);
 const SURFACE_COLOR: Color = BACKGROUND_COLOR;
 const TEXT_COLOR: Color = Color::Rgb(0xc0, 0xca, 0xf5);
@@ -199,25 +200,18 @@ fn session_title_line(
     now: DateTime<Utc>,
 ) -> Line<'static> {
     let time = relative_time(session, now);
-    let remote_icon = if session.source == SessionSource::Remote {
-        " "
-    } else {
-        ""
-    };
-    let fixed_width =
-        prefix.chars().count() + remote_icon.chars().count() + time.chars().count() + 1;
+    let icon = session_icon(session);
+    let fixed_width = prefix.chars().count() + icon.chars().count() + time.chars().count() + 1;
     let title_width = width.saturating_sub(fixed_width).max(1);
     let title = truncate_ellipsis(&single_line(&session.display_name()), title_width);
     let used_width = prefix.chars().count()
-        + remote_icon.chars().count()
+        + icon.chars().count()
         + title.chars().count()
         + time.chars().count();
     let spacer = " ".repeat(width.saturating_sub(used_width).max(1));
 
     let mut spans = vec![active_prefix(prefix, is_active)];
-    if !remote_icon.is_empty() {
-        spans.push(Span::styled(remote_icon, remote_icon_style(is_active)));
-    }
+    spans.push(Span::styled(icon, session_icon_style(session, is_active)));
     spans.extend([
         Span::styled(title, name_style),
         Span::raw(spacer),
@@ -420,6 +414,15 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
                 Span::styled(url.clone(), Style::default().fg(TEXT_COLOR)),
             ]));
         }
+    } else {
+        info_lines.push(Line::from(vec![
+            Span::styled("  Source:    ", Style::default().fg(MUTED_COLOR)),
+            Span::styled(session_icon(session), session_icon_style(session, false)),
+            Span::styled(
+                "Local terminal session",
+                Style::default().fg(TERMINAL_COLOR),
+            ),
+        ]));
     }
 
     let info_height = (info_lines.len() as u16 + 1).min(inner.height);
@@ -451,12 +454,33 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
 
     if session.source == SessionSource::Remote {
         turn_lines.push(Line::from(Span::styled(
-            "  Remote agent task.",
+            format!(
+                "  Remote agent task log: gh agent-task view {} --log",
+                session.id
+            ),
             Style::default().fg(REMOTE_COLOR),
         )));
         turn_lines.push(Line::from(Span::raw("")));
+        match session.remote_log.as_deref() {
+            Some(log) if !log.is_empty() => {
+                push_markdown_lines(&mut turn_lines, log, MARKDOWN_TEXT_COLOR, None);
+            }
+            Some(_) => {
+                turn_lines.push(Line::from(Span::styled(
+                    "  No remote task log output available.",
+                    Style::default().fg(MUTED_COLOR),
+                )));
+            }
+            None => {
+                turn_lines.push(Line::from(Span::styled(
+                    "  Loading remote task log…",
+                    Style::default().fg(MUTED_COLOR),
+                )));
+            }
+        }
+        turn_lines.push(Line::from(Span::raw("")));
         turn_lines.push(Line::from(Span::styled(
-            "  Conversation history is not available locally.",
+            "  Press [o] to open this task in your browser.",
             Style::default().fg(MUTED_COLOR),
         )));
     } else if turns.is_empty() {
@@ -516,7 +540,9 @@ fn draw_detail_panel(f: &mut Frame, app: &mut App, area: Rect) {
         app.detail_scroll = max_scroll;
     }
 
-    let log_title = if is_focused && !turns.is_empty() {
+    let log_title = if is_focused && session.source == SessionSource::Remote {
+        " Preview [k/j scroll, o=open browser] "
+    } else if is_focused && !turns.is_empty() {
         " Conversation [k/j scroll, o=open live] "
     } else {
         " Conversation "
@@ -756,8 +782,19 @@ fn status_display(status: &SessionStatus) -> (Color, &'static str) {
     }
 }
 
-fn remote_icon_style(is_active: bool) -> Style {
-    let style = Style::default().fg(REMOTE_COLOR);
+fn session_icon(session: &CopilotSession) -> &'static str {
+    match session.source {
+        SessionSource::Local => " ",
+        SessionSource::Remote => " ",
+    }
+}
+
+fn session_icon_style(session: &CopilotSession, is_active: bool) -> Style {
+    let color = match session.source {
+        SessionSource::Local => TERMINAL_COLOR,
+        SessionSource::Remote => REMOTE_COLOR,
+    };
+    let style = Style::default().fg(color);
     if is_active {
         style.add_modifier(Modifier::BOLD)
     } else {

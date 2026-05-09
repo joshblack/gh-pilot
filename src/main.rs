@@ -18,6 +18,7 @@ use session::copilot_binary;
 use std::{
     io::{self, Write},
     path::PathBuf,
+    process::{Command, Stdio},
     time::{Duration, Instant},
 };
 use terminal::{key_to_bytes, mouse_to_bytes, EmbeddedTerminal};
@@ -70,6 +71,7 @@ where
 
     loop {
         resize_embedded_terminal(app, terminal.size()?);
+        app.load_selected_remote_preview();
         terminal.draw(|f| ui::draw(f, app))?;
 
         // ── Spawn pending embedded terminals ─────────────────────────────────
@@ -142,6 +144,17 @@ where
                         status_since = Some(Instant::now());
                     }
                 }
+            }
+            PendingAction::OpenRemoteTask { id } => {
+                match open_remote_task_in_browser(&id) {
+                    Ok(()) => {
+                        app.status_message = Some("Opened remote task in browser".into());
+                    }
+                    Err(e) => {
+                        app.status_message = Some(format!("Failed to open remote task: {e}"));
+                    }
+                }
+                status_since = Some(Instant::now());
             }
         }
 
@@ -231,6 +244,21 @@ where
 fn notify_waiting_agent() {
     let _ = io::stdout().write_all(b"\x07");
     let _ = io::stdout().flush();
+}
+
+fn open_remote_task_in_browser(id: &str) -> Result<()> {
+    let status = Command::new("gh")
+        .args(["agent-task", "view", id, "--web"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .context("gh agent-task view --web failed to launch")?;
+    if status.success() {
+        Ok(())
+    } else {
+        anyhow::bail!("gh agent-task view --web exited with {status}");
+    }
 }
 
 /// Calculate the rows/cols available for the embedded PTY given the terminal size.

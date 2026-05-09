@@ -66,6 +66,7 @@ pub struct CopilotSession {
     pub remote_url: Option<String>,
     pub remote_user: Option<String>,
     pub pull_request: Option<String>,
+    pub remote_log: Option<String>,
 }
 
 impl CopilotSession {
@@ -276,7 +277,24 @@ fn remote_task_from_json(task: serde_json::Value) -> Option<CopilotSession> {
         remote_url: value_text(task.get("pullRequestUrl")),
         remote_user: value_text(task.get("user")),
         pull_request,
+        remote_log: None,
     })
+}
+
+pub fn load_remote_task_log(session_id: &str) -> String {
+    let output = Command::new("gh")
+        .args(["agent-task", "view", session_id, "--log"])
+        .stderr(Stdio::null())
+        .output();
+
+    let Ok(output) = output else {
+        return String::new();
+    };
+    if !output.status.success() {
+        return String::new();
+    }
+
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
 }
 
 fn value_text(value: Option<&serde_json::Value>) -> Option<String> {
@@ -433,6 +451,7 @@ fn parse_workspace_yaml(content: &str) -> Option<CopilotSession> {
         remote_url: None,
         remote_user: None,
         pull_request: None,
+        remote_log: None,
     })
 }
 

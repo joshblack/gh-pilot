@@ -1,5 +1,6 @@
 use crate::session::{
-    load_sessions, refresh_session_statuses, CopilotSession, SessionSource, SessionStatus,
+    load_remote_task_log, load_sessions, refresh_session_statuses, CopilotSession, SessionSource,
+    SessionStatus,
 };
 use crate::terminal::EmbeddedTerminal;
 use std::collections::HashSet;
@@ -39,6 +40,10 @@ pub enum PendingAction {
     /// Start a new copilot session in `dir`, embedded in the right panel.
     LaunchNew {
         dir: PathBuf,
+    },
+    /// Open a remote agent task in the browser.
+    OpenRemoteTask {
+        id: String,
     },
 }
 
@@ -295,9 +300,10 @@ impl App {
     pub fn open_session_embedded(&mut self) {
         if let Some(idx) = self.session_at_cursor() {
             if self.sessions[idx].source == SessionSource::Remote {
+                let id = self.sessions[idx].id.clone();
                 self.selected_session = Some(idx);
                 self.active_panel = Panel::Detail;
-                self.status_message = Some("Remote agent tasks cannot be opened locally".into());
+                self.pending_action = PendingAction::OpenRemoteTask { id };
                 return;
             }
             let id = self.sessions[idx].id.clone();
@@ -306,6 +312,20 @@ impl App {
             self.active_panel = Panel::Detail;
             self.pending_action = PendingAction::OpenEmbedded { id, cwd };
         }
+    }
+
+    pub fn load_selected_remote_preview(&mut self) {
+        let Some(idx) = self.selected_session else {
+            return;
+        };
+        if self.sessions[idx].source != SessionSource::Remote
+            || self.sessions[idx].remote_log.is_some()
+        {
+            return;
+        }
+
+        let id = self.sessions[idx].id.clone();
+        self.sessions[idx].remote_log = Some(load_remote_task_log(&id));
     }
 
     /// Detach from the embedded terminal and return to normal mode.
