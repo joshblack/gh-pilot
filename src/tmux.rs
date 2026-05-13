@@ -127,6 +127,7 @@ pub fn create_session(project_dir: &Path, launch: LaunchKind) -> Result<ManagedS
         Command::new("tmux").args(["set-option", "-q", "-t", &name, "bell-action", "any"]),
         "tmux set bell action",
     )?;
+    configure_extended_keys(&name)?;
     tmux_status(
         Command::new("tmux").args(["set-option", "-q", "-t", &name, "status-left", ""]),
         "tmux hide generated session name",
@@ -242,6 +243,8 @@ pub fn list_sessions(current_dir: &Path, cache: &mut StatusCache) -> Result<Vec<
 }
 
 pub fn attach_session(name: &str) -> Result<()> {
+    configure_extended_keys(name)?;
+
     let status = Command::new("tmux")
         .args(["attach-session", "-t", name])
         .stderr(Stdio::null())
@@ -253,6 +256,28 @@ pub fn attach_session(name: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn configure_extended_keys(name: &str) -> Result<()> {
+    tmux_status(
+        Command::new("tmux").args(["set-option", "-q", "-t", name, "xterm-keys", "on"]),
+        "tmux enable xterm keys",
+    )?;
+    tmux_status(
+        Command::new("tmux").args(["set-option", "-q", "-t", name, "extended-keys", "always"]),
+        "tmux enable extended keys",
+    )?;
+    tmux_status(
+        Command::new("tmux").args([
+            "set-option",
+            "-q",
+            "-t",
+            name,
+            "extended-keys-format",
+            "csi-u",
+        ]),
+        "tmux set extended key format",
+    )
 }
 
 pub fn mark_seen(name: &str) -> Result<()> {
@@ -344,11 +369,13 @@ fn detect_session_status(
         return SessionStatus::Idle;
     }
 
-    if has_bell && !seen {
+    let detected = status::detect_status(content, content_changed, activity_recent, seen);
+
+    if has_bell && !seen && !matches!(detected, SessionStatus::Waiting | SessionStatus::Busy) {
         return SessionStatus::Done;
     }
 
-    status::detect_status(content, content_changed, activity_recent, seen)
+    detected
 }
 
 fn parse_tmux_time(field: &str) -> Option<SystemTime> {
@@ -568,6 +595,21 @@ mod tests {
         assert_eq!(
             detect_session_status("summary output", false, false, false, false, true),
             SessionStatus::Done
+        );
+    }
+
+    #[test]
+    fn input_prompt_takes_priority_over_unseen_bell() {
+        assert_eq!(
+            detect_session_status(
+                "What would you like to do?\n❯",
+                false,
+                false,
+                false,
+                false,
+                true
+            ),
+            SessionStatus::Waiting
         );
     }
 

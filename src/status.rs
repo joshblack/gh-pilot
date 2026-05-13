@@ -48,7 +48,7 @@ pub fn detect_status(
     content: &str,
     content_changed: bool,
     activity_recent: bool,
-    seen: bool,
+    _seen: bool,
 ) -> SessionStatus {
     let clean = strip_ansi(content);
 
@@ -61,11 +61,7 @@ pub fn detect_status(
     }
 
     if has_input_prompt(&clean) {
-        return if seen {
-            SessionStatus::Idle
-        } else {
-            SessionStatus::Done
-        };
+        return SessionStatus::Waiting;
     }
 
     if content_changed || activity_recent {
@@ -283,14 +279,14 @@ mod tests {
     }
 
     #[test]
-    fn detects_done_prompt_until_seen() {
+    fn detects_input_prompt_as_waiting() {
         assert_eq!(
             detect_status("What would you like to do?\n❯", false, false, false),
-            SessionStatus::Done
+            SessionStatus::Waiting
         );
         assert_eq!(
             detect_status("What would you like to do?\n❯", false, false, true),
-            SessionStatus::Idle
+            SessionStatus::Waiting
         );
     }
 
