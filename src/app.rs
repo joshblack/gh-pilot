@@ -99,7 +99,14 @@ enum InputMode {
 
 impl App {
     fn new(current_dir: PathBuf, remote_enabled: bool) -> Result<Self> {
-        let store = SessionStore::open()?;
+        let current_dir = current_dir.canonicalize().with_context(|| {
+            format!(
+                "failed to resolve current directory {}",
+                current_dir.display()
+            )
+        })?;
+        let mut store = SessionStore::open()?;
+        store.record_recent_path(&current_dir, RECENT_PATH_LIMIT)?;
         let sessions = store.load_local(&current_dir)?;
         let recent_paths = store.load_recent_paths(RECENT_PATH_LIMIT)?;
         let removed_projects = store
@@ -713,6 +720,10 @@ impl App {
             self.message = "select a project to remove".to_owned();
             return Ok(());
         };
+        if group.is_current {
+            self.message = "current project is always shown".to_owned();
+            return Ok(());
+        }
 
         let session_names = self
             .sessions
@@ -1122,7 +1133,7 @@ fn footer_shortcuts(app: &App) -> Vec<&'static str> {
         None => {}
     }
 
-    if has_project {
+    if has_project && app.selected_group().is_some_and(|group| !group.is_current) {
         shortcuts.push("d remove project");
     }
     if !app.sessions.is_empty() {
@@ -2630,7 +2641,7 @@ fn tracked_project_dirs(
     removed_projects: &BTreeSet<String>,
 ) -> Vec<PathBuf> {
     let mut projects = BTreeMap::new();
-    insert_project_dir(&mut projects, current_dir.to_path_buf(), removed_projects);
+    projects.insert(path_key(current_dir), current_dir.to_path_buf());
     for session in sessions {
         insert_project_dir(&mut projects, session.project_dir.clone(), removed_projects);
     }
@@ -3089,13 +3100,25 @@ mod app_tests {
     }
 
     #[test]
-    fn tracked_projects_exclude_removed_paths() {
+    fn tracked_projects_keep_current_when_removed() {
         let current = PathBuf::from("/tmp/current-project");
         let recent = vec![PathBuf::from("/tmp/other-project")];
         let removed = [path_key(&current)].into_iter().collect::<BTreeSet<_>>();
         let projects = tracked_project_dirs(&current, &[], &[], &recent, &removed);
 
-        assert_eq!(projects, recent);
+        assert_eq!(projects.len(), 2);
+        assert!(projects.iter().any(|path| path == &current));
+        assert!(projects.iter().any(|path| path == &recent[0]));
+    }
+
+    #[test]
+    fn tracked_projects_exclude_removed_recent_paths() {
+        let current = PathBuf::from("/tmp/current-project");
+        let recent = vec![PathBuf::from("/tmp/other-project")];
+        let removed = [path_key(&recent[0])].into_iter().collect::<BTreeSet<_>>();
+        let projects = tracked_project_dirs(&current, &[], &[], &recent, &removed);
+
+        assert_eq!(projects, vec![current]);
     }
 
     #[test]
