@@ -264,7 +264,7 @@ fn configure_extended_keys(name: &str) -> Result<()> {
         "tmux enable xterm keys",
     )?;
     tmux_status(
-        Command::new("tmux").args(["set-option", "-q", "-t", name, "extended-keys", "always"]),
+        Command::new("tmux").args(["set-option", "-q", "-t", name, "extended-keys", "on"]),
         "tmux enable extended keys",
     )?;
     tmux_status(
