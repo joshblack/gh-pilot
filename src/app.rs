@@ -90,6 +90,11 @@ enum InputMode {
         completion_prefix: Option<String>,
         completion_index: usize,
     },
+    NewProjectDirectory {
+        buffer: String,
+        completion_prefix: Option<String>,
+        completion_index: usize,
+    },
 }
 
 impl App {
@@ -545,19 +550,46 @@ impl App {
         Ok(())
     }
 
-    fn prompt_new_session_dir(&mut self) {
+    fn add_project(&mut self, project_dir: PathBuf) -> Result<()> {
+        let project_dir = normalize_project_dir(&self.current_dir, &project_dir)?;
+        self.record_recent_path(&project_dir)?;
+        let label = self
+            .project_labels
+            .get(&path_key(&project_dir))
+            .cloned()
+            .unwrap_or_else(|| project_label(&project_dir));
+        self.message = format!("added project {label}");
+        self.clamp_selection();
+        Ok(())
+    }
+
+    fn prompt_new_session_dir(&mut self, remote_enabled: bool) {
         self.input_mode = Some(InputMode::NewSessionDirectory {
             buffer: String::new(),
-            remote_enabled: self.new_session_remote_enabled(),
+            remote_enabled,
             completion_prefix: None,
             completion_index: 0,
         });
-        self.message = "enter repo path".to_owned();
+        self.message = if remote_enabled {
+            "enter repo path for remote session".to_owned()
+        } else {
+            "enter repo path for local session".to_owned()
+        };
+    }
+
+    fn prompt_new_project_dir(&mut self) {
+        self.input_mode = Some(InputMode::NewProjectDirectory {
+            buffer: String::new(),
+            completion_prefix: None,
+            completion_index: 0,
+        });
+        self.message = "enter project repo path".to_owned();
     }
 
     fn handle_input_key(&mut self, code: KeyCode) -> Result<bool> {
         let recent_paths = self.recent_paths.clone();
         let mut create_session = None;
+        let mut add_project = None;
         let Some(mode) = &mut self.input_mode else {
             return Ok(false);
         };
@@ -600,6 +632,41 @@ impl App {
                 }
                 _ => {}
             },
+            InputMode::NewProjectDirectory {
+                buffer,
+                completion_prefix,
+                completion_index,
+            } => match code {
+                KeyCode::Esc => {
+                    self.input_mode = None;
+                    self.message = "new project cancelled".to_owned();
+                }
+                KeyCode::Enter => {
+                    let path = PathBuf::from(buffer.trim());
+                    self.input_mode = None;
+                    add_project = Some(path);
+                }
+                KeyCode::Backspace => {
+                    buffer.pop();
+                    *completion_prefix = None;
+                    *completion_index = 0;
+                }
+                KeyCode::Tab | KeyCode::BackTab => {
+                    complete_path_input(
+                        buffer,
+                        completion_prefix,
+                        completion_index,
+                        &recent_paths,
+                        matches!(code, KeyCode::BackTab),
+                    );
+                }
+                KeyCode::Char(ch) => {
+                    buffer.push(ch);
+                    *completion_prefix = None;
+                    *completion_index = 0;
+                }
+                _ => {}
+            },
         }
 
         if let Some((path, remote_enabled)) = create_session {
@@ -607,6 +674,10 @@ impl App {
             self.record_recent_path(&project_dir)?;
             self.input_mode = None;
             self.create_session_in_dir(project_dir, remote_enabled)?;
+            self.start_remote_load();
+        }
+        if let Some(path) = add_project {
+            self.add_project(path)?;
             self.start_remote_load();
         }
 
@@ -879,7 +950,8 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) ->
                 KeyCode::Up | KeyCode::Char('k') => app.select_previous(),
                 KeyCode::Enter | KeyCode::Char('o') => app.open_selected(),
                 KeyCode::Char('n') => app.new_session()?,
-                KeyCode::Char('N') => app.prompt_new_session_dir(),
+                KeyCode::Char('N') => app.prompt_new_session_dir(false),
+                KeyCode::Char('P') => app.prompt_new_project_dir(),
                 KeyCode::Char('d') => app.remove_selected_project()?,
                 KeyCode::Char('x') => app.close_selected()?,
                 KeyCode::Char('X') => {
@@ -969,11 +1041,23 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
 }
 
 fn footer_text(app: &App, width: usize) -> String {
-    if let Some(InputMode::NewSessionDirectory { buffer, .. }) = &app.input_mode {
+    if let Some(mode) = &app.input_mode {
+        let label = match mode {
+            InputMode::NewSessionDirectory { remote_enabled, .. } => {
+                if *remote_enabled {
+                    "Start remote session in repo"
+                } else {
+                    "Start local session in repo"
+                }
+            }
+            InputMode::NewProjectDirectory { .. } => "Add project repo",
+        };
+        let buffer = match mode {
+            InputMode::NewSessionDirectory { buffer, .. }
+            | InputMode::NewProjectDirectory { buffer, .. } => buffer,
+        };
         return truncate(
-            &format!(
-                "Start session in repo: {buffer}█  • Tab complete • Enter create • Esc cancel"
-            ),
+            &format!("{label}: {buffer}█  • Tab complete • Enter create • Esc cancel"),
             width,
         );
     }
@@ -994,7 +1078,14 @@ fn footer_text(app: &App, width: usize) -> String {
 }
 
 fn footer_shortcuts(app: &App) -> Vec<&'static str> {
-    let mut shortcuts = vec!["? help", "⇥/⇤ filters", "n new", "N new repo", "r refresh"];
+    let mut shortcuts = vec![
+        "? help",
+        "⇥/⇤ filters",
+        "n new",
+        "N new local",
+        "P new project",
+        "r refresh",
+    ];
     let mut has_project = false;
 
     match app.selected_tree_row() {
@@ -1145,7 +1236,14 @@ fn shortcut_help_lines() -> Vec<Line<'static>> {
         Line::raw(""),
         shortcut_help_section("Sessions"),
         shortcut_help_item("n", "start a Copilot session in the selected project"),
-        shortcut_help_item("N", "start a Copilot session in another repo/directory"),
+        shortcut_help_item(
+            "N",
+            "start a local Copilot session in another repo/directory",
+        ),
+        shortcut_help_item(
+            "P",
+            "add another repo/directory as a project without starting a session",
+        ),
         shortcut_help_item(
             "Tab / Shift+Tab",
             "complete or cycle recent repo paths in the prompt",
@@ -1164,7 +1262,10 @@ fn shortcut_help_lines() -> Vec<Line<'static>> {
         shortcut_help_item("r", "refresh local sessions and remote tasks"),
         Line::raw(""),
         shortcut_help_section("Prompts"),
-        shortcut_help_item("Enter", "create the session while entering a repo path"),
+        shortcut_help_item(
+            "Enter",
+            "create the session or project while entering a repo path",
+        ),
         shortcut_help_item(
             "Esc",
             "cancel a prompt, confirmation, or this shortcut list",
@@ -2187,7 +2288,7 @@ fn group_preview(
 
     lines.push(Line::raw(""));
     lines.push(Line::from(Span::styled(
-        "Enter open • n new in project • N new repo • x close • X close all • w web",
+        "Enter open • n new in project • N new local repo • P new project • x close • X close all • w web",
         Style::default()
             .fg(TOKYO_COMMENT)
             .add_modifier(Modifier::ITALIC),
@@ -2878,10 +2979,18 @@ fn open_url(url: &str) -> Result<std::process::ExitStatus> {
 }
 
 fn remote_status(state: &str) -> SessionStatus {
-    match state.to_ascii_lowercase().as_str() {
+    match normalize_remote_state(state).as_str() {
         "completed" | "complete" | "done" | "succeeded" | "success" => SessionStatus::Done,
         "cancelled" | "canceled" | "cancelling" | "canceling" => SessionStatus::Idle,
-        "queued" | "pending" | "waiting" | "blocked" => SessionStatus::Waiting,
+        "queued"
+        | "pending"
+        | "waiting"
+        | "blocked"
+        | "waiting_for_input"
+        | "waiting_for_user"
+        | "input_required"
+        | "user_input_required"
+        | "requires_action" => SessionStatus::Waiting,
         "in_progress" | "running" | "busy" | "started" => SessionStatus::Busy,
         _ => SessionStatus::Idle,
     }
@@ -2889,9 +2998,20 @@ fn remote_status(state: &str) -> SessionStatus {
 
 fn is_cancelled_remote_state(state: &str) -> bool {
     matches!(
-        state.to_ascii_lowercase().as_str(),
+        normalize_remote_state(state).as_str(),
         "cancelled" | "canceled" | "cancelling" | "canceling"
     )
+}
+
+fn normalize_remote_state(state: &str) -> String {
+    state
+        .trim()
+        .chars()
+        .map(|ch| match ch {
+            '-' | ' ' => '_',
+            _ => ch.to_ascii_lowercase(),
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -3011,6 +3131,13 @@ mod app_tests {
         );
         assert!(matching_task_repository(&other_repo_task, Some("joshblack/gh-pilot")).is_none());
         assert!(matching_task_repository(&repo_task, None).is_none());
+    }
+
+    #[test]
+    fn remote_status_detects_waiting_for_input_states() {
+        assert_eq!(remote_status("waiting_for_input"), SessionStatus::Waiting);
+        assert_eq!(remote_status("WAITING FOR USER"), SessionStatus::Waiting);
+        assert_eq!(remote_status("requires-action"), SessionStatus::Waiting);
     }
 
     #[test]
