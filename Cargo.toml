@@ -1,8 +1,8 @@
 [package]
 name = "gh-pilot"
 version = "0.1.0"
-edition = "2021"
-description = "Terminal session manager for AI coding agents (gh extension)"
+edition = "2024"
+description = "Terminal session manager for AI coding agents"
 license = "MIT"
 
 [[bin]]
@@ -10,14 +10,10 @@ name = "gh-pilot"
 path = "src/main.rs"
 
 [dependencies]
-ratatui = "0.30"
-crossterm = "0.29"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-chrono = { version = "0.4", features = ["serde"] }
-dirs = "6"
-rusqlite = { version = "0.39", features = ["bundled"] }
-anyhow = "1"
-portable-pty = "0.9"
-vt100 = "0.16"
-shell-words = "1.1"
+anyhow = "1.0.102"
+clap = { version = "4.6.1", features = ["derive"] }
+crossterm = "0.29.0"
+ratatui = "0.30.0"
+rusqlite = { version = "0.39.0", features = ["bundled"] }
+serde_json = "1.0.145"
+tokio = { version = "1.48.0", features = ["process", "rt-multi-thread", "sync"] }
